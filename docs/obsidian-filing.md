@@ -139,6 +139,15 @@ They do not post Instagram comments from this workflow. Never tell them “don�
 | IG Saved “Fitness tips” | Receipt in `instagram/extractions/`; takeaways on `fitness-tips/_index.md`. **Principles first**, then named plans. Confused / CTA → BACKLOG later-review pile D. Cheap surviving habits also get one line on `health/practical-recommendations.md` |
 | IG Saved “Travel destinations/things to do” | Receipt in `instagram/extractions/`; takeaways on `travel/_index.md`. File **places**, **things to do on trips you already take**, **mechanics**, **points**, **food/hike/nightlife/Kami**, **someday**. Pretty-only → one line or skip. Ask why / when / with whom when there is a real place. Copy keep frames (map / sign / menu / itinerary) into `instagram/extractions/_media/{id}/`. |
 | IG Saved “Good info” | Receipt in `instagram/extractions/`; file to the matching hub (`health/`, `wealth/`, `travel/`, …). Leftovers on `good-info/_index.md`. Folder is a weak signal. Keep frames when the still is the fact. |
+| IG Saved “Clothes/fashion/scents” | Receipt in `instagram/extractions/`; takeaways on `clothes/_index.md`. Wear / scents / care. Pretty-only → one line or skip. |
+| IG Saved “Tennis tips” | Receipt in `instagram/extractions/`; takeaways on `tennis/_index.md`. Strokes / footwork / gear. Pretty match clips → one line. |
+| IG Saved “Cooking/Nutrition” | Receipt in `instagram/extractions/`; takeaways on `cooking/_index.md`. Folder is a weak signal. Cheap surviving habits also get one line on `health/practical-recommendations.md`. Pretty plating → one line. |
+| IG Saved “Skin/hair care” | Receipt in `instagram/extractions/`; takeaways on `skin-hair/_index.md`. Cheap surviving habits also get one line on `health/practical-recommendations.md`. Product dumps → one line. |
+| IG Saved “Taxes” | Receipt in `instagram/extractions/`; takeaways on `wealth/_index.md` when it is a real filing/tax mechanic. CTA software → one line. |
+| IG Saved “Technology” | Receipt in `instagram/extractions/`; shipping curiosity on `building-an-app/_index.md`. Gadget / science leftover stays a hub line, not a new hub. |
+| IG Saved “Language” | Receipt in `instagram/extractions/`; leftovers on `good-info/_index.md`. Do not spawn a Language hub for two posts. |
+| IG Saved “Parenting” | Receipt in `instagram/extractions/`; leftovers on `good-info/_index.md`. Do not spawn a Parenting hub for one post. |
+| IG Saved “Israel-Palestine” | Receipt in `instagram/extractions/`; takeaways on `geopolitics/_index.md`. Date the tape. Maps/mechanics keep; 72-hour opinion cards do not. |
 | Unsorted | `_inbox/` → classify later |
 
 ---
