@@ -50,7 +50,7 @@ python scripts/igx.py reel 'https://www.instagram.com/reel/…'
 python scripts/igx.py carousel 'https://www.instagram.com/p/…'
 python scripts/igx.py youtube 'https://www.youtube.com/watch?v=…'
 python scripts/igx.py twitter 'https://x.com/user/status/…'
-python scripts/igx.py batch URL1 URL2          # --workers 2; --jsonl FILE
+python scripts/igx.py batch URL1 URL2          # --workers 1 --ig-gap 45; --jsonl FILE
 python scripts/igx.py status --jsonl FILE
 python scripts/igx.py reextract SHORTCODE --frame-interval 1
 ```

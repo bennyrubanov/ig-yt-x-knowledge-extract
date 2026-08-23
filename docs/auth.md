@@ -17,7 +17,7 @@ Netscape (Mozilla) format. First line `# Netscape HTTP Cookie File` or `# HTTP C
 
 `python3 scripts/check-setup.py` only checks that the **row exists**. It does **not** prove Instagram will serve media. A stale `sessionid` from a logged-out Chrome session is still a green check. Log into [instagram.com](https://www.instagram.com/) in the browser first, then re-export, then probe one reel (see below).
 
-The scripts pass that path to `yt-dlp --cookies`. They do **not** call `--cookies-from-browser` unless a human does that themselves.
+Extract copies that file to a throwaway jar and passes **the copy** to `yt-dlp --cookies`. yt-dlp always writes the file back; after a failed Instagram fetch that write-back can delete the `sessionid` row. The live export must stay untouched. Hand-rolled `yt-dlp` probes must use a copy too. Scripts do **not** call `--cookies-from-browser` unless a human does that themselves.
 
 ## Write the Instagram jar (pick one)
 
@@ -46,7 +46,7 @@ This writes **every site’s** cookies from that Chrome profile. Prefer A. If yo
 
 On macOS the Keychain prompt must be **Allow**, not Always Allow. A human has to click it. **One dump.** Each `--cookies-from-browser` can prompt Keychain **twice** in one command (`--cookies` + browser extract). Retrying Default, then Profile 1, then a live probe is how you get 6–10 dialogs. Close extra Chrome instances if yt-dlp says the cookie DB is locked.
 
-`--cookies FILE` is also a **write-back**. If the file is empty, yt-dlp errors (`does not look like a Netscape format cookies file`). Seed a header first. After a failed Instagram fetch, write-back can **strip `sessionid`** from the live jar — probe against a **copy**, never the live path.
+`--cookies FILE` is also a **write-back**. If the file is empty, yt-dlp errors (`does not look like a Netscape format cookies file`). Seed a header first. After a failed Instagram fetch, write-back can **strip `sessionid`**. `python scripts/igx.py` already copies the jar. A manual probe must still use a **copy**, never `~/.config/ig-cookies.txt`.
 
 `chrome:Default` is Chrome’s first on-disk profile (`…/Google/Chrome/Default`). A second Chrome person is `Profile 1`. Export from the profile that is actually logged into Instagram.
 
@@ -89,11 +89,33 @@ The Python CLI (`scripts/igx.py`) still will not run Instagram downloads until `
 
 Same Netscape recipe → `~/.config/x-cookies.txt`. Only needed when yt-dlp hits a login wall or age-gate on video. Do not use the official X API.
 
+## Login paused / “try again later”
+
+Instagram is pausing **this login**, not proving a permanent ban and not saying the password is wrong. The usual trigger is the same logged-in browser hitting media endpoints in a burst (this pipeline reuses the Chrome session via cookies; there is no OAuth grant).
+
+**2026-08-23:** a Notion inbox batch of 19 Instagram URLs in about 20 minutes, then two same-run retries on posts that already came back empty. Seventeen items had already downloaded, so the session was valid at the start. After the run, `python3 scripts/check-setup.py` reported **no `sessionid` row** — yt-dlp had been pointed at the live jar and write-back deleted it. Instagram separately decided the session looked automated and paused Chrome login.
+
+Copying the jar (now default) stops the **local** wipe. It does not stop Instagram from checkpointing a burst. Spacing and no same-run retry are what reduce that.
+
+While the timer is up:
+
+1. Wait. Do not keep submitting the login form; that extends it.
+2. Do not re-export cookies until a reel **plays in Chrome while logged in**. Then one HttpOnly export into `~/.config/ig-cookies.txt` ([recipe above](#write-the-instagram-jar-pick-one)).
+3. Do not run this pipeline against Instagram until the human says browser login works.
+4. Empty-media Instagram URLs: mark `fail` and stop. Do **not** retry them in the same burst.
+5. Batches default to `--workers 1` and `--ig-gap 45`. Do not raise workers to finish faster.
+
+`--workers 1`, no cookie paste, and not looping `--cookies-from-browser` were already correct. The volume plus failed retries is what looked bot-like.
+
 ## Agents must not
 
 - Ask the user to “connect Instagram” in Cursor / Claude / Codex
 - Put cookies in the repo, chat, jsonl, Notion, or vault
 - Crawl Chrome or the cookie jar to list Saved collections (use the official Accounts Center ZIP — see `AGENTS.md`)
 - Re-export on a cloud agent and hope the operator’s session appears
+- Pass `~/.config/ig-cookies.txt` straight to `yt-dlp --cookies` (the CLI copies it; a manual probe must copy it too)
+- Retry empty-media Instagram URLs in the same run
+- Hammer the Instagram login form, or re-export, while Chrome shows a pause / checkpoint
+- Hit Instagram from this repo until the human confirms a reel plays logged-in
 
-Re-export when yt-dlp 403s or media comes back empty. Sessions expire.
+Re-export only after the browser session works again. Sessions expire; a checkpoint is not “export harder.”

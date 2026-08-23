@@ -49,6 +49,17 @@ class ExtractQueueCmdTests(unittest.TestCase):
         self.assertEqual(normalize_kind("tv"), "reel")
         self.assertEqual(igx_cmd("tv")[2], "reel")
 
+    def test_instagram_is_not_retried_in_run(self) -> None:
+        from extract_queue import DEFAULT_IG_GAP_S, DEFAULT_WORKERS, download_attempts
+
+        self.assertEqual(download_attempts("reel"), 1)
+        self.assertEqual(download_attempts("carousel"), 1)
+        self.assertEqual(download_attempts("tv"), 1)
+        self.assertEqual(download_attempts("youtube"), 2)
+        self.assertEqual(download_attempts("twitter"), 2)
+        self.assertEqual(DEFAULT_WORKERS, 1)
+        self.assertGreaterEqual(DEFAULT_IG_GAP_S, 30)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ python3 scripts/check-setup.py
 ```
 
 1. Clone + venv + `local.env` — [README.md](README.md). Symlink is optional (skip on Windows).
-2. **Cookies are not automatic.** There is no Graph API, no “Connect Instagram,” no app permission to grant Cursor/Claude/Codex. Scripts hard-require `~/.config/ig-cookies.txt` (Netscape, HttpOnly `sessionid`). If that file is missing, **stop** and give the human [docs/auth.md](docs/auth.md). Do not invent OAuth. Do not echo the jar. A green `check-setup.py` only means the `sessionid` **row** exists. Empty media after that → the browser is logged out (or the post is gone). Human logs into instagram.com, then **one** re-export. Do not run `--cookies-from-browser` in a loop (each dump can be two Keychain prompts). Probe media with a **copy** of the jar so yt-dlp write-back cannot strip `sessionid`.
+2. **Cookies are not automatic.** There is no Graph API, no “Connect Instagram,” no app permission to grant Cursor/Claude/Codex. Scripts hard-require `~/.config/ig-cookies.txt` (Netscape, HttpOnly `sessionid`). If that file is missing, **stop** and give the human [docs/auth.md](docs/auth.md). Do not invent OAuth. Do not echo the jar. A green `check-setup.py` only means the `sessionid` **row** exists. Empty media after that → the browser is logged out (or the post is gone), **or** you just clobbered the jar by passing the live file to `yt-dlp --cookies` (extract now copies it; hand-rolled probes must still copy). Human logs into instagram.com, then **one** re-export. Do not run `--cookies-from-browser` in a loop (each dump can be two Keychain prompts). Instagram batches: `--workers 1` (default) and `--ig-gap 45` (default). Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause, wait — do not hit Instagram from this repo until a reel plays logged-in. Detail: [docs/auth.md](docs/auth.md).
 3. Optional X video: `~/.config/x-cookies.txt` — same pattern, not the X API.
 
 Never commit, log, echo, or paste cookie contents.
@@ -46,7 +46,7 @@ python scripts/igx.py reel "<REEL_URL>"
 python scripts/igx.py carousel "<POST_URL>"
 python scripts/igx.py youtube "<YOUTUBE_URL>"
 python scripts/igx.py twitter "<TWEET_URL>"
-python scripts/igx.py batch URL URL
+python scripts/igx.py batch URL URL   # default --workers 1 --ig-gap 45
 python scripts/igx.py status --jsonl FILE
 ```
 
@@ -61,7 +61,7 @@ python3 scripts/notion-extract-inbox.py list
 python3 scripts/notion-extract-inbox.py urls
 ```
 
-Then `igx batch` those URLs and `mark --status noted` (or `fail`). **Do not skip** because the caption says comment a word for a link — extract the reel; ignore the keyword. The prompt is the **Name** text before `on Instagram:` (question, statement, or filing instruction), not a Question column. Ticker prompts belong on the vault wealth trackers, not only in chat.
+Then `igx batch` those URLs (`--workers 1 --ig-gap 45` are the defaults) and `mark --status noted` (or `fail`). Empty Instagram media → `fail` once; do **not** retry in the same run. **Do not skip** because the caption says comment a word for a link — extract the reel; ignore the keyword. The prompt is the **Name** text before `on Instagram:` (question, statement, or filing instruction), not a Question column. Ticker prompts belong on the vault wealth trackers, not only in chat.
 
 ## Paths
 

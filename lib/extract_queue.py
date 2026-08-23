@@ -10,6 +10,7 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -32,10 +33,19 @@ from local_config import REPO_ROOT, default_jsonl_path
 KINDS = ("reel", "carousel", "youtube", "twitter")
 # IGTV /tv/ is the same download path as a reel. Saved-export queues still emit kind=tv.
 KIND_ALIASES = {"tv": "reel"}
+IG_KINDS = frozenset({"reel", "carousel"})
+DEFAULT_WORKERS = 1
+DEFAULT_IG_GAP_S = 45
+_ig_gate = threading.Lock()
 
 
 def normalize_kind(kind: str) -> str:
     return KIND_ALIASES.get(kind or "", kind)
+
+
+def download_attempts(kind: str) -> int:
+    """Instagram empty-media is a checkpoint risk, not a blip. Do not retry in-run."""
+    return 1 if normalize_kind(kind) in IG_KINDS else 2
 
 
 def igx_cmd(kind: str) -> list[str]:
@@ -64,6 +74,7 @@ def run_one(
     jsonl: Path,
     downloads: Path,
     timeout: int,
+    ig_gap_s: int = 0,
 ) -> dict:
     kind = normalize_kind(kind)
     base = {"kind": kind, "media_id": mid, "url": url, **extra}
@@ -71,47 +82,64 @@ def run_one(
         row = {**base, "status": "skipped_exists", "got": artifacts(kind, mid, downloads)}
         log_row(jsonl, row)
         return row
-    t0 = time.time()
-    last_err = ""
-    exit_code = 1
-    try:
-        cmd = igx_cmd(kind) + [url]
-        ok = False
-        for attempt in range(1, 3):
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            last_err = (proc.stderr or "")[-2000:]
-            exit_code = proc.returncode
-            if proc.returncode == 0:
-                ok = True
-                break
-            time.sleep(8 * attempt)
-        got = artifacts(kind, mid, downloads)
-        if ok:
-            status = "ok"
-        elif usable(kind, got):
-            status = "ok_partial"
-        else:
-            status = "fail"
-        row = {
-            **base,
-            "status": status,
-            "exit": exit_code,
-            "elapsed_s": round(time.time() - t0, 1),
-            "got": got,
-            "stderr_tail": last_err if status == "fail" else "",
-        }
-    except subprocess.TimeoutExpired:
-        got = artifacts(kind, mid, downloads)
-        row = {
-            **base,
-            "status": "ok_partial" if usable(kind, got) else "timeout",
-            "elapsed_s": timeout,
-            "got": got,
-        }
-    except Exception as exc:  # noqa: BLE001 — audit row must always write
-        row = {**base, "status": "error", "error": str(exc), "got": artifacts(kind, mid, downloads)}
-    log_row(jsonl, row)
-    return row
+
+    def _download() -> dict:
+        t0 = time.time()
+        last_err = ""
+        exit_code = 1
+        try:
+            cmd = igx_cmd(kind) + [url]
+            ok = False
+            attempts = download_attempts(kind)
+            for attempt in range(1, attempts + 1):
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                last_err = (proc.stderr or "")[-2000:]
+                exit_code = proc.returncode
+                if proc.returncode == 0:
+                    ok = True
+                    break
+                if attempt < attempts:
+                    time.sleep(8 * attempt)
+            got = artifacts(kind, mid, downloads)
+            if ok:
+                status = "ok"
+            elif usable(kind, got):
+                status = "ok_partial"
+            else:
+                status = "fail"
+            row = {
+                **base,
+                "status": status,
+                "exit": exit_code,
+                "elapsed_s": round(time.time() - t0, 1),
+                "got": got,
+                "stderr_tail": last_err if status == "fail" else "",
+            }
+        except subprocess.TimeoutExpired:
+            got = artifacts(kind, mid, downloads)
+            row = {
+                **base,
+                "status": "ok_partial" if usable(kind, got) else "timeout",
+                "elapsed_s": timeout,
+                "got": got,
+            }
+        except Exception as exc:  # noqa: BLE001 — audit row must always write
+            row = {
+                **base,
+                "status": "error",
+                "error": str(exc),
+                "got": artifacts(kind, mid, downloads),
+            }
+        log_row(jsonl, row)
+        return row
+
+    if kind in IG_KINDS:
+        with _ig_gate:
+            row = _download()
+            if ig_gap_s > 0:
+                time.sleep(ig_gap_s)
+            return row
+    return _download()
 
 
 def jobs_from_queue(path: Path) -> list[dict]:
@@ -167,7 +195,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--downloads", type=Path, default=DEFAULT_DOWNLOADS)
     p.add_argument("--vault", type=Path, default=DEFAULT_VAULT)
     p.add_argument("--no-vault", action="store_true")
-    p.add_argument("--workers", type=int, default=2)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help="Parallel jobs (default 1). Instagram downloads still run one at a time.",
+    )
+    p.add_argument(
+        "--ig-gap",
+        type=int,
+        default=DEFAULT_IG_GAP_S,
+        metavar="SEC",
+        help="Seconds to wait after each Instagram download (default 45; 0 to disable).",
+    )
     p.add_argument("--timeout", type=int, default=900)
     args = p.parse_args(argv)
 
@@ -180,7 +220,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     args.jsonl.parent.mkdir(parents=True, exist_ok=True)
-    print(f"jobs={len(jobs)} workers={args.workers} jsonl={args.jsonl}", flush=True)
+    ig_jobs = sum(1 for job in jobs if normalize_kind(job["kind"]) in IG_KINDS)
+    print(
+        f"jobs={len(jobs)} workers={args.workers} ig_gap={args.ig_gap}s jsonl={args.jsonl}",
+        flush=True,
+    )
+    if args.workers > 1 and ig_jobs:
+        print(
+            "NOTE: Instagram downloads still run one at a time (login-checkpoint risk).",
+            flush=True,
+        )
     results = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futs = [
@@ -193,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                 jsonl=args.jsonl,
                 downloads=args.downloads,
                 timeout=args.timeout,
+                ig_gap_s=args.ig_gap,
             )
             for job in jobs
         ]

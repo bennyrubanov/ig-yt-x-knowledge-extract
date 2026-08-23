@@ -35,6 +35,8 @@ No paid APIs. Scripts already warn if `ollama ps` shows a loaded model.
 
 There is no Instagram Connect / Graph API. If `~/.config/ig-cookies.txt` is missing, stop and follow [auth.md](auth.md). Cloud agents cannot complete that step. Never echo the jar.
 
+Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram batches still run **one at a time** with `--ig-gap 45` (default). Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause, wait; do not hit Instagram until a reel plays logged-in. [auth.md](auth.md).
+
 ---
 
 ## Step 1 — Ollama check
@@ -321,10 +323,10 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 ## Security
 
 - Never commit, log, echo, or paste cookie contents. Recipe: [auth.md](auth.md)
-- Re-export cookies on yt-dlp 403/auth errors
+- Re-export cookies only after a reel plays in Chrome logged-in (a checkpoint is not “export harder”)
 - Downloads may contain PII — don't upload externally without asking
 
-**`sessionid`:** a Netscape export that skips HttpOnly cookies will 403 / empty-media even when the post is live. Chrome usually has `sessionid` as HttpOnly. `check-setup.py` green (row present) is **not** a live session — Chrome can be logged out and the row still exists. Human logs into instagram.com first. Then **one** attended `--cookies-from-browser` (Keychain **Allow**, 1–2 prompts per dump). Prefer an Instagram-only jar. Probe media with a **copy** of the jar — `yt-dlp --cookies FILE` writes back and can strip `sessionid` after empty-media. Do not commit, echo, or paste cookie files. Recipe: [auth.md](auth.md).
+**`sessionid`:** a Netscape export that skips HttpOnly cookies will 403 / empty-media even when the post is live. Chrome usually has `sessionid` as HttpOnly. `check-setup.py` green (row present) is **not** a live session — Chrome can be logged out and the row still exists. Human logs into instagram.com first. Then **one** attended `--cookies-from-browser` (Keychain **Allow**, 1–2 prompts per dump). Prefer an Instagram-only jar. Extract copies the jar before yt-dlp; a manual probe must still use a **copy**. After empty-media, do not retry that Instagram URL in the same run. Do not commit, echo, or paste cookie files. Recipe: [auth.md](auth.md).
 
 ---
 
@@ -334,7 +336,8 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 |---------|--------|------------|
 | Image-only carousel dies before slides | `--print id` / video-first + `set -e` | Current `transcribe-carousel.sh` (URL shortcode + thumbnail-first) |
 | `{id}.txt` grows to tens of GB | `cat` combined Twitter transcript onto itself | Current `transcribe-twitter.sh`; restore `thread.txt` |
-| Empty IG media, post still live | Missing HttpOnly `sessionid`, **or** Chrome logged out (stale row; check-setup still green), **or** the post is gone | Log into Instagram in the browser. One attended dump ([auth.md](auth.md) B). Probe a *copy* of the jar. If a sibling post downloads, treat this ID as gone. Do not multi-dump Keychain. |
+| Empty IG media, post still live | Missing HttpOnly `sessionid`, **or** Chrome logged out (stale row; check-setup still green), **or** the post is gone | Log into Instagram in the browser. One attended dump ([auth.md](auth.md) B). Probe a *copy* of the jar. If a sibling post downloads, treat this ID as gone. Do not multi-dump Keychain. Do **not** retry this URL in the same burst. |
+| Chrome login paused / “try again later” after a batch | Same session hit media endpoints in a burst; retries on empty posts make it worse. yt-dlp `--cookies` on the **live** jar can also delete the `sessionid` row (extract now copies the jar) | Wait out the timer. Do not resubmit the login form. Do not re-export until a reel plays in Chrome logged-in. Do not run this pipeline against Instagram until then. Batches: `--workers 1 --ig-gap 45`. Incident 2026-08-23: [auth.md](auth.md) |
 | Instagram comment threads empty | yt-dlp `--write-comments` → `i.instagram.com/api/v1/media/{pk}/comments/` returns `status: fail` (trial 2026-08-19). The working media/info payload has `comment_count` (946 / 3689) but `preview_comments` is empty and `hide_view_all_comment_entrypoint` is true. iOS `app_id` extractor-arg 400s video info. gallery-dl does not support IG comments; not installed here. Graph API is **your** professional media only. | Paste the comment or a screenshot. Open the reel in Instagram yourself. Do not add a second IG client. |
 | jsonl says `fail`, media/note exists | Append-only log; last-write is stale | `extract-status.sh --jsonl FILE` (optionally `--write-recovered`) |
 | Frames skipped | Video >120s | `ffmpeg -ss T -frames:v 1` or `reextract-frames.sh` |
@@ -344,6 +347,7 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 
 ## Changelog
 
+- **2026-08-23** — Notion inbox batch (19 IG URLs, then two empty-media retries against the live jar) paused Chrome login and deleted the `sessionid` row. Extract now copies the cookie jar before every yt-dlp call. Instagram jobs: one at a time, `--ig-gap 45`, no same-run retry. Wait out checkpoints; do not hammer login. [auth.md](auth.md).
 - **2026-08-22** — Empty-media with a green `check-setup.py` means Chrome was logged out (or the post is gone), not “no sessionid row.” `yt-dlp --cookies FILE` write-back can strip `sessionid` after a failed fetch — probe a copy. One `--cookies-from-browser` can prompt Keychain twice; do not retry profiles. Seed a Netscape header before using `--cookies` as a dump target. [auth.md](auth.md).
 - **2026-08-19** — Paste inbox is documented as optional and out of this repo: [paste-inbox.md](paste-inbox.md). `user_question` is parsed from the Name prefix before `on Instagram:`. Notion **Question** / **Topics** stay in the schema as unused overlays; do not fill them on paste. Public docs do not include one-off “draft a comment to post” voice. Instagram comment threads are not fetched.
 - **2026-08-19** — Extract CLI is Python (`python scripts/igx.py …`) so Windows and Mac share one implementation. `.sh` files are thin Unix wrappers. No WSL required. Cookie path is still `~/.config/ig-cookies.txt`.

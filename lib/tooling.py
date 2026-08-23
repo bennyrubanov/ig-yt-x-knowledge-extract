@@ -1,9 +1,13 @@
 """Shared subprocess helpers. Never print cookie values."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 
 from local_config import ig_cookies_path, x_cookies_path
@@ -104,6 +108,29 @@ def has_audio_stream(path: Path) -> bool:
     return bool((proc.stdout or "").strip())
 
 
+@contextmanager
+def scratch_cookie_jar(src: Path) -> Iterator[Path]:
+    """Copy a Netscape jar for yt-dlp ``--cookies`` write-back.
+
+    yt-dlp mutates the file passed to ``--cookies``. After a failed Instagram
+    fetch that write-back can strip ``sessionid`` from the live export. Always
+    give yt-dlp a throwaway copy; never write the mutated copy back onto
+    ``~/.config/ig-cookies.txt``.
+    """
+    fd, raw = tempfile.mkstemp(prefix="igx-cookies-", suffix=".txt")
+    os.close(fd)
+    dest = Path(raw)
+    try:
+        shutil.copy2(src, dest)
+        try:
+            dest.chmod(0o600)
+        except OSError:
+            pass
+        yield dest
+    finally:
+        dest.unlink(missing_ok=True)
+
+
 def ytdlp(
     args: list[str],
     *,
@@ -112,24 +139,30 @@ def ytdlp(
     capture: bool = False,
     live_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    cmd = [require_cmd("yt-dlp")]
-    if cookies is not None:
-        cmd += ["--cookies", str(cookies)]
-    cmd += args
-    if live_stderr:
+    def _run(cookie_path: Path | None) -> subprocess.CompletedProcess[str]:
+        cmd = [require_cmd("yt-dlp")]
+        if cookie_path is not None:
+            cmd += ["--cookies", str(cookie_path)]
+        cmd += args
+        if live_stderr:
+            return subprocess.run(
+                cmd,
+                check=check,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+            )
         return subprocess.run(
             cmd,
             check=check,
-            stdout=subprocess.PIPE,
-            stderr=None,
+            capture_output=capture,
             text=True,
         )
-    return subprocess.run(
-        cmd,
-        check=check,
-        capture_output=capture,
-        text=True,
-    )
+
+    if cookies is not None:
+        with scratch_cookie_jar(cookies) as jar:
+            return _run(jar)
+    return _run(None)
 
 
 def ytdlp_print(query: str, url: str, *, cookies: Path | None = None) -> str:
