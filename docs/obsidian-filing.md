@@ -30,11 +30,12 @@ Shortcodes start with `D`. That is why extractions are nested — otherwise they
 |--------|----------|
 | `health/` | Health notes. Start at `health/_index.md` |
 | `wealth/` | Investing (no separate `investing/` folder). Books, ticker map, `investments/`, `companies/` |
-| `building-an-app/` | Shipping / hosting takeaways |
-| `marketing-an-app/` | Marketing notes from Saved or other sources |
+| `building-an-app/` | Shipping / hosting takeaways. **Tight pair with `marketing-an-app/`** (one product loop: ship ↔ get users). Cross-link both hubs; a reel may sit in both. |
+| `marketing-an-app/` | Marketing notes from Saved or other sources. Sister of `building-an-app/`. |
 | `fitness-tips/` | IG Saved Fitness tips. Principles first, then named plans |
 | `privacy/` `real-estate/` `travel/` `decisions/` | That domain’s `_index.md` |
 | `people/` `ai/` | Person hubs / papers |
+| `language/` | Mandarin first: pronunciation, input, characters. Joke reels stay on `good-info/` |
 | `instagram/extractions/{id}-{slug}.md` | One reel / carousel (receipt) |
 | `instagram/runs/` | Extract plan / audit (process) |
 | `youtube/` `twitter/` | Other extract archives |
@@ -145,7 +146,7 @@ They do not post Instagram comments from this workflow. Never tell them “don�
 | IG Saved “Skin/hair care” | Receipt in `instagram/extractions/`; takeaways on `skin-hair/_index.md`. Cheap surviving habits also get one line on `health/practical-recommendations.md`. Product dumps → one line. |
 | IG Saved “Taxes” | Receipt in `instagram/extractions/`; takeaways on `wealth/_index.md` when it is a real filing/tax mechanic. CTA software → one line. |
 | IG Saved “Technology” | Receipt in `instagram/extractions/`; shipping curiosity on `building-an-app/_index.md`. Gadget / science leftover stays a hub line, not a new hub. |
-| IG Saved “Language” | Receipt in `instagram/extractions/`; leftovers on `good-info/_index.md`. Do not spawn a Language hub for two posts. |
+| IG Saved “Language” | Receipt in `instagram/extractions/`. **Mandarin method** (YouTube + study tools) → `language/_index.md`. Joke / tone-bit leftovers stay on `good-info/_index.md`. |
 | IG Saved “Parenting” | Receipt in `instagram/extractions/`; leftovers on `good-info/_index.md`. Do not spawn a Parenting hub for one post. |
 | IG Saved “Israel-Palestine” | Receipt in `instagram/extractions/`; takeaways on `geopolitics/_index.md`. Date the tape. Maps/mechanics keep; 72-hour opinion cards do not. |
 | Unsorted | `_inbox/` → classify later |
