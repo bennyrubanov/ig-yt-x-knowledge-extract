@@ -7,9 +7,12 @@ Read this file first. Auth (no Instagram OAuth): [docs/auth.md](docs/auth.md). E
 | Tool | What it loads in this repo |
 |------|----------------------------|
 | Claude Code | [CLAUDE.md](CLAUDE.md) → this file |
-| Cursor | this file + [.cursor/rules](.cursor/rules) |
-| Codex | this file (`AGENTS.md`) |
+| Cursor (this clone) | this file + [.cursor/rules](.cursor/rules) (thin pointer only) |
+| Cursor Cloud / Copilot | this file via [CLAUDE.md](CLAUDE.md) / [.github/copilot-instructions.md](.github/copilot-instructions.md) |
+| Codex / OpenCode / Aider | this file (`AGENTS.md`) |
 | Gemini CLI | [GEMINI.md](GEMINI.md) → this file |
+
+**This file is the source of truth.** Do not put pipeline rules only in `~/.cursor/` or `~/.claude/` — those homes are one machine and one tool. Personal cross-repo skills stay in `~/Coding_Projects/cursor-skills` (not this public GitHub repo). Detail: [docs/agent-workflow.md](docs/agent-workflow.md).
 
 Obsidian is **knowledge-only** — summaries, analysis, wikilinks. All tooling stays in this repo.
 
@@ -52,7 +55,23 @@ python scripts/igx.py status --jsonl FILE
 
 Unix wrappers (`transcribe-reel.sh`, …) call the same Python. Config symlink `~/.config/ig-yt-x-knowledge-extract` is optional (legacy `ig-reels-knowledge-extract` / `ig-reel` still resolve). Windows: run from the clone; no symlink.
 
+```bash
+# same commands via the optional Unix symlink
+~/.config/ig-yt-x-knowledge-extract/transcribe-reel.sh "<REEL_URL>"
+~/.config/ig-yt-x-knowledge-extract/reextract-frames.sh {id} --frame-interval 1
+```
+
 Scoreboard is disk + vault. Do not count jsonl `fail` rows.
+
+## Extraction loop
+
+1. `ollama ps` — warn if a model is loaded (scripts already print this).
+2. Run `python scripts/igx.py …` (`--frame-interval 1` default; use `2` only for a static talking-head).
+3. Read frames **selectively** — align to the transcript. Do not load every JPG in one turn.
+4. If charts/text are missing → `python scripts/igx.py reextract {id} --frame-interval 1`.
+5. Write the receipt under `instagram/extractions/` (or `youtube/` / `twitter/`). Write the human page in the knowledge-center folder. Filing: [docs/obsidian-filing.md](docs/obsidian-filing.md).
+6. Optional prune: `python scripts/igx.py cleanup --keep-noted --days 30` (Unix: `cleanup-downloads.sh`).
+7. Pipeline lessons go in [docs/agent-workflow.md](docs/agent-workflow.md) **this turn**, not only in chat.
 
 Optional paste-inbox (IDs in `local.env`). Public = extractor; the ping is a separate habit: [docs/paste-inbox.md](docs/paste-inbox.md).
 
