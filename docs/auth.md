@@ -17,11 +17,13 @@ Netscape (Mozilla) format. First line `# Netscape HTTP Cookie File` or `# HTTP C
 
 `python3 scripts/check-setup.py` only checks that the **row exists**. It does **not** prove Instagram will serve media. A stale `sessionid` from a logged-out Chrome session is still a green check. Log into [instagram.com](https://www.instagram.com/) in the browser first, then re-export, then probe one reel (see below).
 
-Extract copies that file to a throwaway jar and passes **the copy** to `yt-dlp --cookies`. yt-dlp always writes the file back; after a failed Instagram fetch that write-back can delete the `sessionid` row. The live export must stay untouched. Hand-rolled `yt-dlp` probes must use a copy too. Scripts do **not** call `--cookies-from-browser` unless a human does that themselves.
+Extract copies that file to a throwaway jar and passes **the copy** to `yt-dlp --cookies`. yt-dlp always writes the file back; after a failed Instagram fetch that write-back can delete the `sessionid` row. The live export must stay untouched. Hand-rolled `yt-dlp` probes must use a copy too. `python scripts/igx.py` never dumps Chrome itself. On this Mac, the **agent** writes the jar with **one** attended `--cookies-from-browser` (option B). The operator clicks Keychain **Allow**. Do not ask them to use a cookie-extension export unless they prefer that.
 
 ## Write the Instagram jar (pick one)
 
-### A — Instagram-only export (preferred)
+This operator’s usual path is **B** (agent dump, Keychain click). **A** is optional if they already use a cookie-extension.
+
+### A — Instagram-only export (extension; optional)
 
 1. In Chrome (or Firefox), log into [instagram.com](https://www.instagram.com/) as the account that can see the posts.
 2. On an instagram.com tab, export **Netscape cookies**, **including HttpOnly**. A common tool is the “Get cookies.txt LOCALLY” extension. Cookie-Editor and similar work if they actually write HttpOnly `sessionid`.
@@ -40,9 +42,9 @@ Then check **without printing values**:
 python3 scripts/check-setup.py
 ```
 
-### B — Dump from Chrome via yt-dlp (attended)
+### B — Dump from Chrome via yt-dlp (attended; this operator)
 
-This writes **every site’s** cookies from that Chrome profile. Prefer A. If you use B, filter to Instagram before keeping the file, and delete the full dump.
+This is what agents run on this Mac. It writes **every site’s** cookies from that Chrome profile; filter to Instagram before keeping the file, and delete the full dump. Do not tell the operator to “export cookies” with an extension unless they ask.
 
 On macOS the Keychain prompt must be **Allow**, not Always Allow. A human has to click it. **One dump.** Each `--cookies-from-browser` can prompt Keychain **twice** in one command (`--cookies` + browser extract). Retrying Default, then Profile 1, then a live probe is how you get 6–10 dialogs. Close extra Chrome instances if yt-dlp says the cookie DB is locked.
 
@@ -102,8 +104,8 @@ While the timer is up:
 1. Wait. Do not keep submitting the login form; that extends it.
 2. Do not re-export cookies until a reel **plays in Chrome while logged in**. Then one HttpOnly export into `~/.config/ig-cookies.txt` ([recipe above](#write-the-instagram-jar-pick-one)).
 3. Do not run this pipeline against Instagram until the human says browser login works.
-4. Empty-media Instagram URLs: mark `fail` and stop. Do **not** retry them in the same burst.
-5. Batches default to `--workers 1` and `--ig-gap 45`. Do not raise workers to finish faster.
+4. Empty-media **or HTTP 400** Instagram URLs: mark `fail` and stop. Do **not** retry them in the same burst. A spaced 8-ok then 400 (2026-08-26) is still a stop.
+5. Batches default to `--workers 1` and `--ig-gap 45`. Do not raise workers to finish faster. After a login pause, use **longer, uneven** waits between Instagram jobs (about **90–180 s**, picked at random). Split a large inbox across sittings; **resume by skipping jsonl `exit==0` URLs** — do not restart the prefix. 2026-08-27: 32, pause, then 29 more (18 leftover reels + 11 carousels) all served. Empty-media / HTTP 400 still fail-once. Random User-Agents, proxies, or extra `yt-dlp` probes are not part of this pipeline — they look more automated, not less.
 
 `--workers 1`, no cookie paste, and not looping `--cookies-from-browser` were already correct. The volume plus failed retries is what looked bot-like.
 
