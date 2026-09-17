@@ -40,6 +40,8 @@ Never commit, log, echo, or paste cookie contents.
 
 Do not extract a paste-inbox pile until they say so on a machine that has cookies and the vault.
 
+Every item saved to **Knowledge Extractions** is intentional: something should be extracted even when the title has no question or filing hint. Read the source and any saved context, infer the useful takeaway, and find the matching existing knowledge hub. The unresolved questions are **what to extract** and **where to file**; ask only when the ambiguity materially changes the result. Do not silently skip sparse-context items, text-only posts, articles, repositories, or links unsupported by the media downloader. Use an appropriate reading/extraction tool, retain the source URL and saved prompt, and record inaccessible sources as blocked/fail with the reason. A comment-keyword CTA is not a reason to skip. Only mark `noted` after the knowledge has actually been filed.
+
 Scripts warn if `ollama ps` shows a loaded model. Whisper also uses RAM; confirm before a long run if something else is already using the GPU/RAM.
 
 ## Quick start

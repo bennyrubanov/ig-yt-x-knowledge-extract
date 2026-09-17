@@ -305,6 +305,8 @@ Whisper: `{id}.whisper.log` + live segment progress on stderr.
 
 Parallel batch: `transcribe-batch.sh URL…` (routes `/reel/` `/p/` YouTube X) or `extract-queue.py --queue queue.json`. Writes `--jsonl` (default `/tmp/extract.jsonl`). **Scoreboard:** `extract-status.sh --jsonl FILE` — disk + vault, not raw `fail` counts. A job that exits 234 (mjpeg) or 1 (old image-only carousel) but left slides/frames is `ok_partial` / `recovered`, not a missing note. Queue `kind: tv` (`/tv/` IGTV) is treated as a reel — do not let it `ValueError` the worker (Fitness 2026-08-20 died at 242/243 on that).
 
+**Mixed Knowledge Extractions queue (2026-09-17):** Every item saved to **Knowledge Extractions** is intentional: something should be extracted even when the title has no question or filing hint. Read the source and any saved context, infer the useful takeaway, and find the matching existing knowledge hub. The unresolved questions are **what to extract** and **where to file**; ask only when the ambiguity materially changes the result. Do not silently skip sparse-context items, text-only posts, articles, repositories, or links unsupported by the media downloader. Use an appropriate reading/extraction tool, retain the source URL and saved prompt, and record inaccessible sources as blocked/fail with the reason. A comment-keyword CTA is not a reason to skip. Only mark `noted` after the knowledge has actually been filed.
+
 **Paste inbox (optional, not the Saved ZIP):** public repo = extractor; the ping is a separate habit — [paste-inbox.md](paste-inbox.md). Nothing downloads until the operator says to run the queue on a machine with cookies. Then:
 
 ```bash

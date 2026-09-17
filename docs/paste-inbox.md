@@ -22,7 +22,7 @@ cannot finish Instagram auth. Recipe: [auth.md](auth.md).
 
 ## What this operator runs
 
-1. **Inbox:** a Notion database. Phone or browser paste: URL in the URL column.
+1. **Inbox:** the Notion **Knowledge Extractions** database (formerly Instagram Extractions), for mixed sources, not only Instagram. Phone or browser paste: URL in the URL column.
    The analysis prompt is typed **in the title, immediately before** Instagram’s
    auto-title (`{creator} on Instagram: "{caption}"`). Example:
 
@@ -30,16 +30,20 @@ cannot finish Instagram auth. Recipe: [auth.md](auth.md).
 
 2. **Ping:** a Railway job in a **different** personal repo counts rows whose
    Status is empty or `queued` and that have a URL. It emails **once** when that
-   count first hits **100**, then stays quiet until the pile drops below 100 and
-   climbs again. No cookies, Whisper, or vault on that host. Resend subject
-   looks like `Instagram extract inbox: N queued`.
+   count first hits **100**, then stays quiet until no queued or extracting
+   items remain. Reminder state persists across Railway sleep, restarts, and deployments. No cookies, Whisper, or vault on that host. Resend subject
+   looks like `Knowledge Extractions: N queued — ready when you are`. The email
+   links to this repository and its agent instructions, for any AI tool.
 
-3. **Extract:** on the laptop, after the ping (or whenever you ask):
+3. **Extract:** on the configured machine, only when you ask. First list and
+   classify the mixed queue. Send supported media URLs to `igx`; read articles,
+   text posts, repositories, and other sources with the appropriate tool. Do not
+   pass the whole mixed queue blindly to the media downloader. For example:
 
 ```bash
 python3 scripts/notion-extract-inbox.py list
 python3 scripts/notion-extract-inbox.py urls
-python scripts/igx.py batch $(python3 scripts/notion-extract-inbox.py urls)
+python scripts/igx.py batch "<supported-media-url>"
 # file notes, then for each id:
 python3 scripts/notion-extract-inbox.py mark --media-id SHORTCODE --status noted \
     --vault-path instagram/extractions/SHORTCODE-slug.md
@@ -72,7 +76,8 @@ Put the database and data-source IDs in `local.env`. Point
 
 Optional ping (keep it out of this repo): poll the same queued definition, email
 when `count` first reaches N, remember you already mailed this pile, re-arm only
-after `count < N`. Do not put `ig-cookies.txt` on that host.
+after there are no queued or extracting items left. Reserve the reminder in
+durable storage before delivery; a process-local variable does not survive host sleep. Do not put `ig-cookies.txt` on that host.
 
 ## Name prefix is the prompt
 
@@ -99,3 +104,9 @@ rather than deleting them:
   Do not tag rows on paste. `mark --topic` still exists if you want it.
 
 Keep **Name**, **URL**, **Status**, **Media ID**, **Vault path** visible.
+
+## Saved-item intent and filing
+
+Every item saved to **Knowledge Extractions** is intentional: something should be extracted even when the title has no question or filing hint. Read the source and any saved context, infer the useful takeaway, and find the matching existing knowledge hub. The unresolved questions are **what to extract** and **where to file**; ask only when the ambiguity materially changes the result. Do not silently skip sparse-context items, text-only posts, articles, repositories, or links unsupported by the media downloader. Use an appropriate reading/extraction tool, retain the source URL and saved prompt, and record inaccessible sources as blocked/fail with the reason. A comment-keyword CTA is not a reason to skip. Only mark `noted` after the knowledge has actually been filed.
+
+The current queue drain is deferred until explicitly requested. Receiving a reminder does not authorize extraction.
