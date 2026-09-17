@@ -105,7 +105,7 @@ If `user_question` is set, the **first** TL;DR bullet is:
 
 Empty / URL-only inbox titles: write `(none — URL only.)` and still say what you did with the save. Do not invent a prompt they did not write.
 
-They do not post Instagram comments from this workflow. Never tell them “don’t comment KEYWORD.” Skip those rows as ads and move on.
+They do not post Instagram comments from this workflow. Never tell them “don’t comment KEYWORD.” Extract the saved source and its useful content; a comment-keyword CTA is not a skip reason.
 
 **Body structure:**
 

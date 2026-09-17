@@ -349,6 +349,8 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 
 ## Changelog
 
+- **2026-09-17** — Before resuming a queued batch, reconcile usable local media with filed vault receipts. Cached media can finish a queue without new Instagram requests; generate missing selected frames locally. Preserve Notion `created_time` as `added_at` in receipts, separately from extraction date. Review the original Name when the prompt parser drops a short instruction or absorbs creator text. Mark `noted` only after validating the receipt, retained media, and hub links.
+
 - **2026-08-28** — Retrying historical empty-media fails: a **0-byte `{id}.description.txt`** still counts as `usable()` on disk, so `igx batch` logs `skipped_exists` without downloading. Delete stale sidecars (and any empty `{id}/` tree) before retry. Two Aug-23 empty-media rows recovered; `DcYw0OSu8x_` still HTTP 400 (isolated retry, same error).
 - **2026-08-27** — Notion IG drain finished in two sittings (32, pause, then 29). Resume by **skipping jsonl `exit==0` URLs** — do not restart the list (that re-hits Instagram). Random **90–180 s** after each success + stop-on-nonzero; carousels were fast. Instagram served all 29. Empty-media / HTTP 400 still fail-once. [auth.md](auth.md).
 - **2026-08-26** — After the 23 Aug checkpoint: do not try to empty a large Notion IG pile in one sitting. Random **150–210 s** gaps still produced Instagram **HTTP 400** on the 9th reel of a long run (`DcYw0OSu8x_`). Stop. Do not retry. Do not re-export until a reel plays in Chrome. [auth.md](auth.md).
