@@ -48,9 +48,13 @@ Write the same fact as a person would say it:
 
 Source notes with a saved Name prefix must open the TL;DR with **Your prompt:** + what you did (not YAML only). The prefix is a prompt, not always a question.
 
+When the capture intent is future music production or sampling, the deliverable includes the actual audio, not just a summary. Preserve an audio copy outside prunable `downloads/`, link it from the note and music hub, and record the source URL, supported title/artist or speaker, descriptive search terms, and useful timestamps. Use an honest unknown identity where identification is unresolved. Do not infer permission to reuse the audio from its availability.
+
 ---
 
 ## Clickable Obsidian notes
+
+For a brief opened in Codex, use ordinary Markdown links with absolute local paths: `[Read note](</absolute/vault/path/note.md>)`. A bare Obsidian wikilink such as `[[path|Read note]]` is not a working note link in that viewer. Verify every target exists. Chat summaries should include a few words about what the original source contained before giving the takeaway; assume the reader does not remember the save.
 
 Canvas `<Link>` opens the default browser. Custom schemes work: the browser hands off to Obsidian.
 

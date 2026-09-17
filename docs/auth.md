@@ -17,6 +17,8 @@ Netscape (Mozilla) format. First line `# Netscape HTTP Cookie File` or `# HTTP C
 
 `python3 scripts/check-setup.py` only checks that the **row exists**. It does **not** prove Instagram will serve media. A stale `sessionid` from a logged-out Chrome session is still a green check. Log into [instagram.com](https://www.instagram.com/) in the browser first, then re-export, then probe one reel (see below).
 
+An expired **exported cookie file** does not prove the browser is logged out. First check the browser the operator actually uses: if the requested reel plays while logged in, another login is unnecessary. A Codex in-app browser session is separate from Chrome and is not automatically available to `yt-dlp --cookies-from-browser chrome:Default`; do not export Chrome merely because a different browser works. Use supported browser media export when available, or the documented attended export from the browser/profile that holds the session. A successful public download despite a stale-cookie warning is not evidence that the jar has been repaired. Network/DNS failures are also not evidence of expired authentication.
+
 Extract copies that file to a throwaway jar and passes **the copy** to `yt-dlp --cookies`. yt-dlp always writes the file back; after a failed Instagram fetch that write-back can delete the `sessionid` row. The live export must stay untouched. Hand-rolled `yt-dlp` probes must use a copy too. `python scripts/igx.py` never dumps Chrome itself. On this Mac, the **agent** writes the jar with **one** attended `--cookies-from-browser` (option B). The operator clicks Keychain **Allow**. Do not ask them to use a cookie-extension export unless they prefer that.
 
 ## Write the Instagram jar (pick one)
