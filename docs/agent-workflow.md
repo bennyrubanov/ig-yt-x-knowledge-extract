@@ -378,3 +378,18 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 - **2026-08-17** — Repo `ig-reels-knowledge-extract`; auto/scene frame modes; cleanup script; agent docs moved from Obsidian
 - **2026-08-17** — faster-whisper default; YouTube captions-first; progress logs
 - **2026-07-27** — Initial pipeline; cookie export; first GEX reel
+
+### Carousel retry and long-video review (2026-09-18)
+
+A carousel caption probe plus thumbnail probe plus full-download fallback could
+request the same Instagram post repeatedly after empty-media errors. Carousel
+extraction now performs one combined download, retaining descriptions alongside
+images and video slides; zero actual media remains a failure even if metadata exists.
+Do not reintroduce a fallback retry on empty responses. Batch pacing alone cannot
+protect against retries hidden inside a per-source command.
+
+Long reels may have a transcript but no frames because the default frame cutoff is
+120 seconds. When the claim depends on a chart or text, inspect selected frames from
+the already downloaded video before filing. Do not repeat the network extraction to
+obtain frames. Very long Whisper hotword prompts can exceed the decoder context;
+retry local transcription with that optional prompt disabled, not a new download.

@@ -28,6 +28,18 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(media_id_from_url("https://www.instagram.com/p/Da5k5eGEghT/"), "Da5k5eGEghT")
         self.assertEqual(media_id_from_url("https://x.com/u/status/2080603050327097694"), "2080603050327097694")
 
+    def test_youtube_id_variants(self) -> None:
+        for url in (
+            "https://www.youtube.com/watch?v=dQw4w9wgGcI&t=20",
+            "https://youtu.be/dQw4w9wgGcI?si=share",
+            "https://youtube.com/shorts/dQw4w9wgGcI?si=share",
+            "https://www.youtube.com/live/dQw4w9wgGcI",
+            "https://www.youtube.com/embed/dQw4w9wgGcI",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(media_id_from_url(url), "dQw4w9wgGcI")
+        self.assertEqual(media_id_from_url("https://youtube.com/shorts/"), "")
+
 
 class ScoreboardTests(unittest.TestCase):
     def test_stale_fail_is_recovered_when_slides_exist(self) -> None:
