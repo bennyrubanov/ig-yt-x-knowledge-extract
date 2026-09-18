@@ -393,3 +393,7 @@ Long reels may have a transcript but no frames because the default frame cutoff 
 the already downloaded video before filing. Do not repeat the network extraction to
 obtain frames. Very long Whisper hotword prompts can exceed the decoder context;
 retry local transcription with that optional prompt disabled, not a new download.
+
+### 2026-09-18: short transcript on a long reel is not complete evidence
+
+A successful Whisper exit can omit speech when VAD rejects quiet or music-backed sections. Compare transcript coverage with video length and inspect selected later frames, especially caption cards. On `DaxkiRnsRDS` the default pass only captured the opening, while later footage established a turnback before Mytikas. Reprocess the **already-downloaded audio**, with a separate no-VAD comparison transcript when needed; do not redownload Instagram media. Music lyrics and hallucinated filler from a no-VAD pass are not reliable spoken evidence. Long clips also skip automatic frames, so extract selected local stills explicitly.
