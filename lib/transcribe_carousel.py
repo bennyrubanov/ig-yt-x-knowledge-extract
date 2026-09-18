@@ -7,7 +7,7 @@ from pathlib import Path
 
 from extract_status import media_id_from_url
 from local_config import downloads_dir
-from tooling import extract_audio_aac, ocr_to_file, require_ig_cookies, ytdlp, ytdlp_print
+from tooling import extract_audio_aac, ocr_to_file, require_ig_cookies, ytdlp
 from whisper_run import whisper_transcribe
 
 
@@ -46,19 +46,15 @@ def main(argv: list[str] | None = None) -> int:
 
     mid = media_id_from_url(args.url)
     if not mid:
-        mid = (ytdlp_print("id", args.url, cookies=cookies) or "").splitlines()[0].strip()
-    if not mid:
         print(f"Could not resolve post id from {args.url}", file=sys.stderr)
         return 1
 
     description = download_dir / f"{mid}.description.txt"
     slides_dir = download_dir / mid / "slides"
     manifest = slides_dir / "manifest.txt"
-    desc = ytdlp(["--print", "description", args.url], cookies=cookies, capture=True)
-    description.write_text(desc.stdout or "", encoding="utf-8")
-    if not description.stat().st_size:
-        print("[carousel] description empty (common on image-only posts)", file=sys.stderr)
-
+    # One extraction request: a failed caption/thumbnail probe must not trigger
+    # another Instagram request in the same run. Full download also retains video
+    # slides, while --ignore-no-formats-error allows image-only entries.
     slides_dir.mkdir(parents=True, exist_ok=True)
     template = str(slides_dir / "slide_%(playlist_index)02d.%(ext)s")
     print(f"[carousel] Downloading slides to {slides_dir} ...", file=sys.stderr)
@@ -66,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         [
             "--yes-playlist",
             "--ignore-no-formats-error",
-            "--skip-download",
+            "--write-description",
             "--write-thumbnail",
             "--convert-thumbnails",
             "jpg",
@@ -76,22 +72,15 @@ def main(argv: list[str] | None = None) -> int:
         ],
         cookies=cookies,
     )
-
-    if not _slide_files(slides_dir):
-        print("[carousel] No thumbnails — retrying full download (video slides) ...", file=sys.stderr)
-        ytdlp(
-            [
-                "--yes-playlist",
-                "--ignore-no-formats-error",
-                "--write-thumbnail",
-                "--convert-thumbnails",
-                "jpg",
-                "-o",
-                template,
-                args.url,
-            ],
-            cookies=cookies,
-        )
+    captions = sorted(slides_dir.glob("*.description"))
+    caption = next(
+        (p.read_text(encoding="utf-8", errors="replace") for p in captions if p.stat().st_size),
+        "",
+    )
+    if caption or not description.exists():
+        description.write_text(caption, encoding="utf-8")
+    if not description.stat().st_size:
+        print("[carousel] description empty (common on image-only posts)", file=sys.stderr)
 
     for thumb in list(slides_dir.glob("slide_*.jpg")) + list(slides_dir.glob("slide_*.webp")):
         base = thumb.with_suffix("")
@@ -107,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         + "\n",
         encoding="utf-8",
     )
-    slide_count = len([p for p in slides_dir.iterdir() if p.is_file() and p.name != "manifest.txt"])
+    slide_count = len(_slide_files(slides_dir))
 
     if slides_dir.is_dir():
         ocr_to_file(slides_dir, out=download_dir / f"{mid}.ocr.txt")

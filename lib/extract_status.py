@@ -45,7 +45,7 @@ def media_id_from_url(url: str) -> str:
     m = re.search(r"(?:status|statuses)/(\d+)", url)
     if m:
         return m.group(1)
-    m = re.search(r"(?:v=|youtu\.be/)([\w-]{6,})", url)
+    m = re.search(r"(?:v=|youtu\.be/|youtube\.com/(?:shorts|live|embed)/)([\w-]{6,})", url, re.I)
     if m:
         return m.group(1)
     return ""
