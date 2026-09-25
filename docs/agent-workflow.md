@@ -406,3 +406,27 @@ first-pass segment log for the final transcript. For a large mixed queue, clear
 ### 2026-09-18: short transcript on a long reel is not complete evidence
 
 A successful Whisper exit can omit speech when VAD rejects quiet or music-backed sections. Compare transcript coverage with video length and inspect selected later frames, especially caption cards. On `DaxkiRnsRDS` the default pass only captured the opening, while later footage established a turnback before Mytikas. Reprocess the **already-downloaded audio**, with a separate no-VAD comparison transcript when needed; do not redownload Instagram media. Music lyrics and hallucinated filler from a no-VAD pass are not reliable spoken evidence. Long clips also skip automatic frames, so extract selected local stills explicitly.
+
+### 2026-09-25: parallel review, explicit evidence coverage, durable audio
+
+For a mixed queue, parallelize independent source analysis and project-backlog
+research while one worker owns paced Instagram access. Local transcription can
+run alongside downloading, but keep CPU/RAM-heavy transcription bounded. YouTube
+caption endpoints can also return HTTP429; do not assume Instagram is the only
+service requiring restraint. Never multiply source requests through subagents.
+
+A complete saved caption or recoverable primary article can sometimes support a
+useful extraction without another media request. State exactly what was reviewed;
+never imply a video, inaccessible linked guide, or music performance was watched
+or heard when only text or selected frames were available. For a music save,
+retaining photographs or a caption does not fulfill an explicit soundtrack request:
+keep that requirement unresolved until the audio is preserved or the user resolves
+it. Copy audio into the vault's persistent music folder, verify the copy, retain its
+source/note links, and distinguish temporary downloads from that durable copy.
+A durable local/iCloud copy is not proof of an independent backup.
+
+Check claims in their original units and context before filing: bookings are not
+revenue, lifetime contracted revenue is not an annual run rate, relative changes
+in questionnaire scores are not changes in ability, and a mining claim is not
+ordinary private ownership of land. Preserve useful source details and uncertainty
+rather than substituting a generic warning for the extraction.
