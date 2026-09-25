@@ -48,7 +48,9 @@ Write the same fact as a person would say it:
 
 Source notes with a saved Name prefix must open the TL;DR with **Your prompt:** + what you did (not YAML only). The prefix is a prompt, not always a question.
 
-When the capture intent is future music production or sampling, the deliverable includes the actual audio, not just a summary. Preserve an audio copy outside prunable `downloads/`, link it from the note and music hub, and record the source URL, supported title/artist or speaker, descriptive search terms, and useful timestamps. Use an honest unknown identity where identification is unresolved. Do not infer permission to reuse the audio from its availability.
+When the capture intent is to keep a song, voice or performance for future music production or sampling, the deliverable includes the actual audio, not just a summary. Preserve an audio copy outside prunable `downloads/`, link it from the note and music hub, and record the source URL, supported title/artist or speaker, descriptive search terms, and useful timestamps. Use an honest unknown identity where identification is unresolved. Do not infer permission to reuse the audio from its availability.
+
+Music techniques and tutorials also belong in the configured production repo's reference guide, with source/context, a usable application and uncertainty. In the batch brief, link the repo handoff as well as the vault analysis and report any pending handoff. Follow [Music production handoff](obsidian-filing.md#music-production-handoff); an audio inventory alone does not cover technique knowledge.
 
 ---
 
