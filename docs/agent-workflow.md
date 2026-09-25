@@ -196,7 +196,7 @@ This **replaces** `{id}/frames/*.jpg`. Transcript and video unchanged.
 ~/.config/ig-yt-x-knowledge-extract/transcribe-reel.sh 'REEL_URL' --frame-interval 1
 ```
 
-Videos **>120s**: frames skipped by default; use manual `ffmpeg -ss` seeks on `{id}.mp4`. For Travel / Good info, dump a handful of stills yourself if the place or list is on screen — then copy **keep frames** into `instagram/extractions/_media/{id}/` (1–4 stills that carry the fact, not the full grid).
+Videos **>120s**: frames skip during automatic download. An explicit `igx reextract {id} --frame-interval 10` now overrides that cap when a spaced overview is useful; use manual `ffmpeg -ss` seeks on `{id}.mp4` when only a few timestamps matter. For Travel / Good info, copy **keep frames** into `instagram/extractions/_media/{id}/` (1–4 stills that carry the fact, not the full grid). The September 2026 Pamir reel exposed the prior bug: `reextract` silently reused the automatic 120-second cap and produced zero frames.
 
 ---
 

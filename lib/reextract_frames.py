@@ -62,7 +62,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if frames_dir.exists():
         shutil.rmtree(frames_dir)
-    result = frame_extract(video, frames_dir, args.frame_interval)
+    # The 120-second limit protects automatic downloads; an explicit local
+    # re-extraction is the operator opting into frame generation.
+    result = frame_extract(video, frames_dir, args.frame_interval, skip_long=False)
     if frames_dir.is_dir():
         ocr_to_file(frames_dir, out=ocr_out)
     print("--- Re-extract summary ---", file=sys.stderr)
