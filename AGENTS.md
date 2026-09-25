@@ -103,6 +103,8 @@ Write the **receipt** under `instagram/extractions/` (or `youtube/` / `twitter/`
 
 Document as you go. A learning that is only in chat is not captured. Pipeline lessons go in [docs/agent-workflow.md](docs/agent-workflow.md). Personal parked work goes in `BACKLOG.local.md` if that file exists.
 
+**Project handoffs:** route useful content-creation, travel, personal-investing, health/fitness and music knowledge into the related repositories configured in local instructions. Keep the full source note in Obsidian and add a usable reference or retrieval guide in the project during the same turn. Follow [docs/project-handoffs.md](docs/project-handoffs.md); a saved source is not a completed real-world action or validated recommendation.
+
 **YouTube captions:** creator-uploaded `en` beats automatic captions (`en-en`, `en-orig`). Whisper is a comparison pass only (`--force-whisper`).
 
 **IG Saved collections:** no OAuth. Official Accounts Center export (Saved only) → parse URLs. Do not crawl collections with the cookie jar. Do not commit the ZIP. `noted` = id appears in a vault filename. Folder is a weak signal — file the keep on screen. Export captions often attach to the wrong post; trust downloaded media, Whisper, `{id}.ocr.txt`.
