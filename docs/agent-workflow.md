@@ -392,7 +392,11 @@ Long reels may have a transcript but no frames because the default frame cutoff 
 120 seconds. When the claim depends on a chart or text, inspect selected frames from
 the already downloaded video before filing. Do not repeat the network extraction to
 obtain frames. Very long Whisper hotword prompts can exceed the decoder context;
-retry local transcription with that optional prompt disabled, not a new download.
+the faster-whisper wrapper now retries the saved audio without the prompt on the
+specific decoder-context errors. The final transcript is written only after that
+retry succeeds. Do not switch to a new Instagram download or mistake a partial
+first-pass segment log for the final transcript. For a large mixed queue, clear
+`WHISPER_HOTWORDS` and `WHISPER_INITIAL_PROMPT` in the batch process up front.
 
 ### 2026-09-18: short transcript on a long reel is not complete evidence
 

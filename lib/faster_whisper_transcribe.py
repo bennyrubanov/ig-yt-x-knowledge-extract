@@ -32,24 +32,33 @@ def main() -> None:
     if hotwords:
         extra["hotwords"] = hotwords
 
-    segments, info = model.transcribe(
-        audio,
-        language="en",
-        vad_filter=True,
-        beam_size=5,
-        **extra,
-    )
+    def transcribe(options: dict[str, str]) -> list[str]:
+        segments, info = model.transcribe(
+            audio,
+            language="en",
+            vad_filter=True,
+            beam_size=5,
+            **options,
+        )
+        print(f"Detected language: {info.language} (p={info.language_probability:.2f})", flush=True)
+        lines: list[str] = []
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+            ts = f"[{seg.start:06.1f}s -> {seg.end:06.1f}s]"
+            print(f"{ts} {text}", file=sys.stderr, flush=True)
+            lines.append(text)
+        return lines
 
-    print(f"Detected language: {info.language} (p={info.language_probability:.2f})", flush=True)
-
-    lines: list[str] = []
-    for seg in segments:
-        text = seg.text.strip()
-        if not text:
-            continue
-        ts = f"[{seg.start:06.1f}s -> {seg.end:06.1f}s]"
-        print(f"{ts} {text}", file=sys.stderr, flush=True)
-        lines.append(text)
+    try:
+        lines = transcribe(extra)
+    except (RuntimeError, ValueError) as exc:
+        context_error = "position encodings" in str(exc) or "maximum decoding length" in str(exc)
+        if not extra or not context_error:
+            raise
+        print("WARNING: hotword prompt exceeded Whisper context; retrying saved audio without it", file=sys.stderr)
+        lines = transcribe({})
 
     txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(str(txt_path))
