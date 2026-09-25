@@ -120,6 +120,8 @@ def frame_extract(
     video: Path,
     frames_dir: Path,
     interval: str | int = 1,
+    *,
+    skip_long: bool = True,
 ) -> FrameExtractResult:
     duration = probe_duration(video)
     duration_int = int(duration)
@@ -128,7 +130,7 @@ def frame_extract(
     mode = "fixed"
     chosen: str | int = interval
 
-    if duration_int > 120:
+    if skip_long and duration_int > 120:
         print(
             f"Video longer than 120s ({duration_int}s) — skipping frame extraction.",
             file=sys.stderr,
