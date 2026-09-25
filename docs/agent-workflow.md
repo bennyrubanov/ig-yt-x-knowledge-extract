@@ -430,3 +430,8 @@ revenue, lifetime contracted revenue is not an annual run rate, relative changes
 in questionnaire scores are not changes in ability, and a mining claim is not
 ordinary private ownership of land. Preserve useful source details and uncertainty
 rather than substituting a generic warning for the extraction.
+
+Sparse or garbled OCR does not establish that a video lacks readable text. Inspect
+the relevant local frames directly. When a short subtitle falls between one-second
+frames, extract a targeted sub-second still from the existing video and amend the
+source note; do not download the source again or leave a resolvable detail unknown.
