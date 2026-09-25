@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,7 +18,6 @@ from tooling import (
     require_ig_cookies,
     warn_ollama,
     ytdlp,
-    ytdlp_print,
 )
 from whisper_run import whisper_transcribe
 
@@ -50,25 +50,18 @@ def main(argv: list[str] | None = None) -> int:
     download_dir = downloads_dir()
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    mid = ytdlp_print("id", args.url, cookies=cookies)
-    if not mid:
-        mid = media_id_from_url(args.url)
-    if not mid:
-        print("Could not resolve reel id", file=sys.stderr)
-        return 1
-
-    description = download_dir / f"{mid}.description.txt"
-    frames_dir = download_dir / mid / "frames"
-    desc_proc = ytdlp(["--print", "description", args.url], cookies=cookies, capture=True)
-    description.write_text(desc_proc.stdout or "", encoding="utf-8")
-
+    # Resolve direct reel/reels/p/tv URLs locally. For a share/redirect URL,
+    # yt-dlp resolves the id during this same download, never via a prior probe.
+    mid = media_id_from_url(args.url)
     dl = ytdlp(
         [
+            "--write-description",
+            "--write-info-json",
             "--write-thumbnail",
             "--convert-thumbnails",
             "jpg",
             "-o",
-            str(download_dir / f"{mid}.%(ext)s"),
+            str(download_dir / f"{mid or '%(id)s'}.%(ext)s"),
             "--print",
             "after_move:filepath",
             args.url,
@@ -78,9 +71,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     video_s = (dl.stdout or "").strip().splitlines()
     video = Path(video_s[-1]) if video_s else download_dir / f"{mid}.mp4"
-    if not video.is_file():
-        print(f"Download failed — re-export cookies to {cookies} (docs/auth.md)", file=sys.stderr)
+    if dl.returncode != 0 or not video.is_file() or not video.stat().st_size:
+        print(
+            "Download failed — stop this Instagram run; inspect the error and docs/auth.md. "
+            "Do not retry the same URL or assume the browser needs another login.",
+            file=sys.stderr,
+        )
         return 1
+    if not mid:
+        mid = video.stem
+
+    description = download_dir / f"{mid}.description.txt"
+    frames_dir = download_dir / mid / "frames"
+    caption_file = download_dir / f"{mid}.description"
+    info_file = download_dir / f"{mid}.info.json"
+    caption = ""
+    if caption_file.is_file():
+        caption = caption_file.read_text(encoding="utf-8", errors="replace")
+    elif info_file.is_file():
+        try:
+            info = json.loads(info_file.read_text(encoding="utf-8"))
+            if isinstance(info, dict) and isinstance(info.get("description"), str):
+                caption = info["description"]
+        except (OSError, UnicodeError, ValueError):
+            print("[transcribe] metadata unreadable — continuing with saved media", file=sys.stderr)
+    # Keep the wrapper/filing path stable; yt-dlp's sidecar has no .txt suffix.
+    # A failed download above creates no empty caption that could look usable.
+    description.write_text(caption, encoding="utf-8")
 
     thumbnail = ""
     for ext in (".jpg", ".webp", ".png"):
