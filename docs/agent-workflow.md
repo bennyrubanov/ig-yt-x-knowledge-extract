@@ -37,6 +37,11 @@ There is no Instagram Connect / Graph API. If `~/.config/ig-cookies.txt` is miss
 
 Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram batches still run **one at a time** with `--ig-gap 45` (default). Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause, wait; do not hit Instagram until a reel plays logged-in. [auth.md](auth.md).
 
+Reels now combine ID resolution, caption and media in **one yt-dlp invocation**;
+do not add separate metadata probes before downloading. A single invocation may
+still make several HTTP requests, so pacing and failure stops remain necessary.
+See [the reel request fix and regression checks](reel-single-fetch.md).
+
 ---
 
 ## Step 1 — Ollama check
