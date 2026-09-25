@@ -244,6 +244,11 @@ If frames insufficient → `reextract-frames.sh` with `--frame-interval 1`, then
 
 See [obsidian-filing.md](obsidian-filing.md). Obsidian gets **summaries + analysis**, not raw transcripts or JPGs.
 
+Complete the configured [project handoff](project-handoffs.md) in the same turn for
+content creation, travel, personal investing, health/fitness and other relevant
+domains. A project guide can point to the vault instead of duplicating its full
+analysis, but agents must be able to find the knowledge from their repo entry point.
+
 **Music handoff:** retained audio and production knowledge are separate deliverables.
 When a paired production repo is configured locally, file tutorial techniques there
 as well as in the vault, with a source, usable method, small application and limits.

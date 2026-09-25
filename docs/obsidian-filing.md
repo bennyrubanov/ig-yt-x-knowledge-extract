@@ -153,6 +153,14 @@ They do not post Instagram comments from this workflow. Never tell them â€œdonâ€
 
 ---
 
+## Related project repositories
+
+Obsidian is the source-analysis home; relevant project agents also need a usable
+takeaway or a reliable guide to finding it. Follow [project-handoffs.md](project-handoffs.md)
+for configured content-creation, travel, personal-investing, health/fitness and music
+repositories. Use existing owners, retain source/date/uncertainty, and report a
+blocked project handoff separately instead of leaving the knowledge only in chat.
+
 ## Music production handoff
 
 When local instructions identify a paired music-production repository, a music save can

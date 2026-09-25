@@ -79,6 +79,10 @@ Every hub and every source on the canvas must be a `noteUrl` link. Put the long 
 
 ## After the next large queue
 
+Include the configured [project handoffs](project-handoffs.md): name the domain guides
+updated and any pending repository filing, without implying that research was enacted
+as a trip, treatment, trade or published content.
+
 1. Update hubs (1–3 line takeaways + wikilink). Do not duplicate the reel onto the hub.
 2. Write or update the vault take. Then refresh the canvas: full-sentence answers, every name an `obsidian://` link.
 3. Point chat at the canvas **and** the vault note. Do not paste 100 titles.
