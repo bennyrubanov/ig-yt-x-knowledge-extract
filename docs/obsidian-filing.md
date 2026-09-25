@@ -153,6 +153,33 @@ They do not post Instagram comments from this workflow. Never tell them “don�
 
 ---
 
+## Music production handoff
+
+When local instructions identify a paired music-production repository, a music save can
+have two separate deliverables. File the source analysis in Obsidian in both cases.
+
+- **Technique, tutorial or production workflow:** also update the production repo's
+  existing technique/reference guide in the same turn. Capture the useful method,
+  original URL, clickable vault note, when it helps, one small experiment and the
+  source's limits. Distinguish demonstrated settings from suggested adaptations; do
+  not invent exact values, plugin requirements or evidence of a successful audition.
+- **Song, voice or performance saved for reuse:** preserve the actual audio outside
+  prunable downloads and update the production repo's audio inventory/handoff. A
+  technique catalog entry is not a replacement for requested audio. One source can
+  need both deliverables.
+
+Read the destination repo's instructions and current teaching/track records first.
+Deduplicate by source and technique, extend an existing backlog item when relevant,
+and make the reference discoverable from its agent entry point. Imported ideas remain
+references/proposed exercises until actually taught or tried; do not add them to a
+completed-learning record or change a Live Set just to finish filing.
+
+For backfills, reuse existing source notes and retain their evidence limits instead
+of redownloading completed sources. Record the scope covered. If the configured repo
+is unavailable, keep a concrete pending handoff and report it; do not imply the
+project filing is complete. Keep private repository paths and personal mappings in
+local instructions rather than this public repo.
+
 ## Instagram Saved categories → topic hubs
 
 Instagram Saved collections map to vault **topic hubs**. Same idea as company hubs: **one source note**, index from/to the hub — don’t copy the reel into a second page.

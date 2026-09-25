@@ -244,6 +244,14 @@ If frames insufficient → `reextract-frames.sh` with `--frame-interval 1`, then
 
 See [obsidian-filing.md](obsidian-filing.md). Obsidian gets **summaries + analysis**, not raw transcripts or JPGs.
 
+**Music handoff:** retained audio and production knowledge are separate deliverables.
+When a paired production repo is configured locally, file tutorial techniques there
+as well as in the vault, with a source, usable method, small application and limits.
+Link its existing reference/learning entry point; do not assume an audio manifest
+makes techniques discoverable. Backfills should reuse existing notes, and imported
+ideas must not be labeled as lessons already completed. See the
+[filing contract](obsidian-filing.md#music-production-handoff).
+
 **Routing:**
 
 | Goal | Path |

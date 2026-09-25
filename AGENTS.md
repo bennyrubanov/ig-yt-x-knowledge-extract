@@ -109,6 +109,8 @@ Document as you go. A learning that is only in chat is not captured. Pipeline le
 
 **Music / remix folders:** title + artist from frames or speech; else a lyrics hook + `track_id: unknown`. Add `vibe:` tags. There is no Shazam in this pipeline.
 
+**Music techniques / tutorials:** when a production repository is configured in local instructions, also file the usable technique there in the same turn. Include the source, Obsidian note, practical application and limits; update existing references instead of creating duplicate assignments. Saving audio alone does not capture a technique. Follow the [music production handoff](docs/obsidian-filing.md#music-production-handoff) and the destination repo's instructions. Filing an idea does not mean it has been taught or applied in a DAW.
+
 Videos **>120s** skip frames by default; `python scripts/igx.py reextract {id}` (or `reextract-frames.sh`) if needed.
 
 This pipeline does **not** fetch Instagram comment threads (caption, frames, and transcript only). `yt-dlp --write-comments` exists; Instagram’s comments endpoint currently fails (see [docs/agent-workflow.md](docs/agent-workflow.md)). Graph API is comments on **your** professional posts only. If a source is in the thread, paste the text or a screenshot.
