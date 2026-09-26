@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +60,31 @@ class ExtractQueueCmdTests(unittest.TestCase):
         self.assertEqual(download_attempts("youtube"), 2)
         self.assertEqual(download_attempts("twitter"), 2)
         self.assertEqual(DEFAULT_WORKERS, 1)
-        self.assertGreaterEqual(DEFAULT_IG_GAP_S, 30)
+        self.assertEqual(DEFAULT_IG_GAP_S, 0)  # safety floor is enforced centrally
+
+    def test_batch_stops_remaining_instagram_after_first_failure(self) -> None:
+        from extract_queue import main
+
+        jobs = [
+            {"kind": kind, "media_id": mid, "url": url, "extra": {}}
+            for kind, mid, url in (
+                ("reel", "one", "https://www.instagram.com/reel/one/"),
+                ("reel", "two", "https://www.instagram.com/reel/two/"),
+                ("youtube", "three", "https://www.youtube.com/watch?v=three"),
+            )
+        ]
+        called: list[str] = []
+
+        def fake_run_one(**kwargs):  # noqa: ANN003
+            called.append(kwargs["mid"])
+            return {"status": "fail" if kwargs["mid"] == "one" else "ok", "kind": kwargs["kind"], "media_id": kwargs["mid"]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            board = {"recovered": [], "still_fail": [], "log_last": {}, "now": {}}
+            with patch("extract_queue.jobs_from_urls", return_value=jobs), patch("extract_queue.run_one", side_effect=fake_run_one), patch("extract_queue.already_done", return_value=False), patch("extract_queue.load_jsonl", return_value=[]), patch("extract_queue.scoreboard", return_value=board), patch("extract_queue.append_recovered", return_value=0), patch("extract_queue.format_report", return_value="report"):
+                code = main(["ignored", "--jsonl", str(Path(tmp) / "audit.jsonl"), "--no-vault"])
+        self.assertEqual(code, 1)
+        self.assertEqual(called, ["one", "three"])
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ No paid APIs. Scripts already warn if `ollama ps` shows a loaded model.
 
 There is no Instagram Connect / Graph API. If `~/.config/ig-cookies.txt` is missing, stop and follow [auth.md](auth.md). Cloud agents cannot complete that step. Never echo the jar.
 
-Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram batches still run **one at a time** with `--ig-gap 45` (default). Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause, wait; do not hit Instagram until a reel plays logged-in. [auth.md](auth.md).
+Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram downloads run through a persistent local safety hold and cross-process request budget; `--ig-gap` adds delay but cannot disable it. Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause or an automated-activity warning, hold the downloader and use local material until the user confirms the warning is clear. [auth.md](auth.md).
 
 Reels now combine ID resolution, caption and media in **one yt-dlp invocation**;
 do not add separate metadata probes before downloading. A single invocation may
@@ -44,7 +44,7 @@ See [the reel request fix and regression checks](reel-single-fetch.md).
 
 ---
 
-**Account warning:** if the user reports automated activity, stop Instagram collection even when requests succeed. Follow [warning handling](auth.md#automated-activity-warning-without-a-download-failure); reuse local/source material first. No configured delay guarantees account safety.
+**Account warning:** if the user reports automated activity, run `python scripts/igx.py ig-safety hold --reason 'account warning'` even when requests succeed. Follow [warning handling](auth.md#automated-activity-warning-without-a-download-failure); reuse local/source material first. No configured delay guarantees account safety.
 
 ## Step 1 — Ollama check
 
@@ -359,7 +359,7 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 | Image-only carousel dies before slides | `--print id` / video-first + `set -e` | Current `transcribe-carousel.sh` (URL shortcode + thumbnail-first) |
 | `{id}.txt` grows to tens of GB | `cat` combined Twitter transcript onto itself | Current `transcribe-twitter.sh`; restore `thread.txt` |
 | Empty IG media, post still live | Missing HttpOnly `sessionid`, **or** Chrome logged out (stale row; check-setup still green), **or** the post is gone | Log into Instagram in the browser. One attended dump ([auth.md](auth.md) B). Probe a *copy* of the jar. If a sibling post downloads, treat this ID as gone. Do not multi-dump Keychain. Do **not** retry this URL in the same burst. |
-| Chrome login paused / “try again later” after a batch | Same session hit media endpoints in a burst; retries on empty posts make it worse. yt-dlp `--cookies` on the **live** jar can also delete the `sessionid` row (extract now copies the jar) | Wait out the timer. Do not resubmit the login form. Do not re-export until a reel plays in Chrome logged-in. Do not run this pipeline against Instagram until then. Batches: `--workers 1 --ig-gap 45`. Incident 2026-08-23: [auth.md](auth.md) |
+| Chrome login paused / “try again later” after a batch | Same session hit media endpoints in a burst; retries on empty posts make it worse. yt-dlp `--cookies` on the **live** jar can also delete the `sessionid` row (extract now copies the jar) | Hold the local safety guard. Wait out the timer. Do not resubmit the login form. Do not re-export until a reel plays in Chrome logged-in. Do not run this pipeline against Instagram until then. Incident 2026-08-23: [auth.md](auth.md) |
 | Instagram comment threads empty | yt-dlp `--write-comments` → `i.instagram.com/api/v1/media/{pk}/comments/` returns `status: fail` (trial 2026-08-19). The working media/info payload has `comment_count` (946 / 3689) but `preview_comments` is empty and `hide_view_all_comment_entrypoint` is true. iOS `app_id` extractor-arg 400s video info. gallery-dl does not support IG comments; not installed here. Graph API is **your** professional media only. | Paste the comment or a screenshot. Open the reel in Instagram yourself. Do not add a second IG client. |
 | jsonl says `fail`, media/note exists | Append-only log; last-write is stale | `extract-status.sh --jsonl FILE` (optionally `--write-recovered`) |
 | Frames skipped | Video >120s | `ffmpeg -ss T -frames:v 1` or `reextract-frames.sh` |

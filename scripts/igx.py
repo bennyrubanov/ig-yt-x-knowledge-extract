@@ -18,13 +18,14 @@ COMMANDS = {
     "reextract": "reextract_frames",
     "cleanup": "cleanup_downloads",
     "ocr-backfill": "ocr_backfill",
+    "ig-safety": "instagram_safety",
 }
 
 
 def _usage() -> None:
     print(
         "Usage: python scripts/igx.py "
-        "{reel|carousel|youtube|twitter|batch|status|reextract|cleanup|ocr-backfill} ...",
+        "{reel|carousel|youtube|twitter|batch|status|reextract|cleanup|ocr-backfill|ig-safety} ...",
         file=sys.stderr,
     )
     print("Unix aliases: transcribe-reel.sh, transcribe-batch.sh, extract-status.sh, …", file=sys.stderr)

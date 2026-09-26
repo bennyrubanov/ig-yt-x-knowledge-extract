@@ -1,7 +1,7 @@
 """Reels use one extraction invocation, including when Instagram refuses media."""
 from __future__ import annotations
 
-from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, nullcontext, redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -72,6 +72,7 @@ class ReelTests(unittest.TestCase):
             stack.enter_context(patch.object(reel, "venv_python", return_value=cookies))
             stack.enter_context(patch.object(reel, "warn_ollama"))
             stack.enter_context(patch("tooling.require_cmd", return_value="yt-dlp"))
+            stack.enter_context(patch("tooling.instagram_request", return_value=nullcontext({})))
             fetch = stack.enter_context(patch("tooling.subprocess.run", side_effect=download))
             stack.enter_context(patch.object(reel, "has_audio_stream", return_value=has_audio))
             audio = stack.enter_context(patch.object(reel, "extract_audio_aac", side_effect=extract_audio))

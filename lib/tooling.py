@@ -9,7 +9,9 @@ import tempfile
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from instagram_safety import InstagramSafetyHold, assert_ready, instagram_request
 from local_config import ig_cookies_path, x_cookies_path
 from ocr_frames import write_ocr
 
@@ -27,6 +29,11 @@ def require_cmd(name: str) -> str:
 
 
 def require_ig_cookies() -> Path:
+    try:
+        assert_ready()
+    except InstagramSafetyHold as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(3) from exc
     path = ig_cookies_path()
     if not path.is_file():
         print(f"Cookie file missing: {path}", file=sys.stderr)
@@ -139,6 +146,17 @@ def ytdlp(
     capture: bool = False,
     live_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
+    def _is_instagram_arg(value: str) -> bool:
+        try:
+            host = (urlsplit(value).hostname or "").lower()
+        except ValueError:
+            return False
+        return host == "instagram.com" or host.endswith(".instagram.com")
+
+    is_instagram = any(_is_instagram_arg(arg) for arg in args)
+    if cookies is not None and cookies.resolve() == ig_cookies_path().resolve():
+        is_instagram = True
+
     def _run(cookie_path: Path | None) -> subprocess.CompletedProcess[str]:
         cmd = [require_cmd("yt-dlp")]
         if cookie_path is not None:
@@ -147,22 +165,38 @@ def ytdlp(
         if live_stderr:
             return subprocess.run(
                 cmd,
-                check=check,
+                check=False,
                 stdout=subprocess.PIPE,
                 stderr=None,
                 text=True,
             )
         return subprocess.run(
             cmd,
-            check=check,
+            check=False,
             capture_output=capture,
             text=True,
         )
 
-    if cookies is not None:
-        with scratch_cookie_jar(cookies) as jar:
-            return _run(jar)
-    return _run(None)
+    def _with_cookies() -> subprocess.CompletedProcess[str]:
+        if cookies is not None:
+            with scratch_cookie_jar(cookies) as jar:
+                return _run(jar)
+        return _run(None)
+
+    if is_instagram:
+        with instagram_request() as attempt:
+            try:
+                proc = _with_cookies()
+            except (OSError, subprocess.SubprocessError):
+                attempt["pause_reason"] = "Instagram downloader failed; review before another request"
+                raise
+            if proc.returncode != 0:
+                attempt["pause_reason"] = f"Instagram downloader exited {proc.returncode}; review before another request"
+    else:
+        proc = _with_cookies()
+    if check:
+        proc.check_returncode()
+    return proc
 
 
 def ytdlp_print(query: str, url: str, *, cookies: Path | None = None) -> str:
