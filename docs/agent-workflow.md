@@ -44,6 +44,8 @@ See [the reel request fix and regression checks](reel-single-fetch.md).
 
 ---
 
+**Account warning:** if the user reports automated activity, stop Instagram collection even when requests succeed. Follow [warning handling](auth.md#automated-activity-warning-without-a-download-failure); reuse local/source material first. No configured delay guarantees account safety.
+
 ## Step 1 — Ollama check
 
 ```bash
