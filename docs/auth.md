@@ -123,3 +123,26 @@ While the timer is up:
 - Hit Instagram from this repo until the human confirms a reel plays logged-in
 
 Re-export only after the browser session works again. Sessions expire; a checkpoint is not “export harder.”
+
+## Automated-activity warning without a download failure
+
+A user-reported automated-activity notice is a stop-and-review signal even when
+normal playback still works and every download succeeded. Successful responses
+only establish retrieval, not account safety or permission to continue. Detection
+may become visible at a later login; its exact trigger cannot be inferred from a
+successful extraction log.
+
+Stop account-facing Instagram collection and review the capture approach before
+resuming a bulk run. Prefer cached media, user-supplied files/recordings or the
+original linked source. Keep transcription, analysis and filing concurrency local.
+Do not treat a fresh process, cookie refresh or another browser as resetting the
+warning. Browser-driven collection is still automated activity.
+
+Spacing and smaller batches reduce request volume; no interval or daily count here
+is a verified safe allowance. Do not describe the default gap, or a longer gap, as
+preventing account warnings. Avoid unnecessary metadata probes and re-downloads;
+never rotate accounts, proxies or browser identities to get around the notice.
+These are agent operating instructions, not a new runtime enforcement mechanism.
+
+Meta describes both rate/data limits and behavioral detection in its
+[anti-scraping explanation](https://about.fb.com/news/2021/04/how-we-combat-scraping/).
