@@ -107,7 +107,7 @@ While the timer is up:
 2. Do not re-export cookies until a reel **plays in Chrome while logged in**. Then one HttpOnly export into `~/.config/ig-cookies.txt` ([recipe above](#write-the-instagram-jar-pick-one)).
 3. Do not run this pipeline against Instagram until the human says browser login works.
 4. Empty-media **or HTTP 400** Instagram URLs: mark `fail` and stop. Do **not** retry them in the same burst. A spaced 8-ok then 400 (2026-08-26) is still a stop.
-5. Batches default to `--workers 1` and `--ig-gap 45`. Do not raise workers to finish faster. After a login pause, use **longer, uneven** waits between Instagram jobs (about **90–180 s**, picked at random). Split a large inbox across sittings; **resume by skipping jsonl `exit==0` URLs** — do not restart the prefix. 2026-08-27: 32, pause, then 29 more (18 leftover reels + 11 carousels) all served. Empty-media / HTTP 400 still fail-once. Random User-Agents, proxies, or extra `yt-dlp` probes are not part of this pipeline — they look more automated, not less.
+5. Check `python scripts/igx.py ig-safety status`. The CLI stops while held. After the user confirms the warning is clear, an agent can deliberately resume with `python scripts/igx.py ig-safety resume --confirmed-clear`; this preserves the prior request history. The guard allows one Instagram downloader at a time across processes, enforces at least 180 seconds between invocations and at most 8 invocations per rolling 24 hours. A nonzero downloader exit pauses further Instagram access. `--ig-gap 0`, a new batch process, and more workers cannot bypass these limits. These are conservative brakes, **not safe thresholds**. Split large inboxes across sittings and resume from local artifacts; do not restart the prefix. Random User-Agents, proxies, or extra `yt-dlp` probes are not part of this pipeline.
 
 `--workers 1`, no cookie paste, and not looping `--cookies-from-browser` were already correct. The volume plus failed retries is what looked bot-like.
 
@@ -142,7 +142,12 @@ Spacing and smaller batches reduce request volume; no interval or daily count he
 is a verified safe allowance. Do not describe the default gap, or a longer gap, as
 preventing account warnings. Avoid unnecessary metadata probes and re-downloads;
 never rotate accounts, proxies or browser identities to get around the notice.
-These are agent operating instructions, not a new runtime enforcement mechanism.
+The CLI enforces a local stop and request budget as described above. A user
+report of a warning must be recorded with `python scripts/igx.py ig-safety hold
+--reason 'account warning'` immediately. The hold state is outside the repo at
+`~/.local/state/ig-yt-x-knowledge-extract/instagram-safety.json` and survives
+new shells, batches and git checkouts. It does not intercept a person running
+`yt-dlp` directly outside this repo or manual browser use.
 
 Meta describes both rate/data limits and behavioral detection in its
 [anti-scraping explanation](https://about.fb.com/news/2021/04/how-we-combat-scraping/).

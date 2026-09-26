@@ -16,7 +16,7 @@ Cross-ref: [AGENTS.md](../AGENTS.md), [agent-workflow.md](agent-workflow.md), [o
 
 **Vault first, canvas second.** The take they will reopen lives in the knowledge-center folder. The canvas is the visual scan for this Cursor chat — write both. A canvas-only report is not captured.
 
-Instagram queues stay `--workers 1 --ig-gap 45`. Empty media is a `fail`, not a same-run retry — a burst plus retries is what paused login on 2026-08-23 ([auth.md](auth.md)).
+Instagram queues stay `--workers 1` and use the persistent local safety guard. Empty media is a stop signal, not a same-run retry — a burst plus retries paused login on 2026-08-23 ([auth.md](auth.md)).
 
 ---
 
