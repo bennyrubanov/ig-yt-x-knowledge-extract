@@ -6,6 +6,10 @@ No paid APIs. Cookies stay on your machine. Scripts warn if `ollama ps` shows a 
 
 **Point an agent at this clone** (Claude Code, Cursor, Codex, Gemini CLI, …): they should read `AGENTS.md` first. Instagram is **not** an OAuth grant — [docs/auth.md](docs/auth.md).
 
+## Instagram account incident — read before setup
+
+On September 27, an account used for extraction was marked Locked and received an explicit automated-behavior warning. The user reports unlocking after dismissing the phone notice; automated extraction remains paused. [Incident and operating rules](docs/instagram-account-incident.md). Working playback or a dismissed warning does not establish safe automation or authorize cookie export/resumption. The setup and usage commands below are reference material, not a restart instruction for an affected account.
+
 ## Setup
 
 **macOS / Linux**
@@ -86,6 +90,7 @@ Optional paste-inbox (Notion or any URL list): this repo does not include a host
 | File | For |
 |------|-----|
 | [AGENTS.md](AGENTS.md) | Agent entry point (Claude / Cursor / Codex / Gemini) |
+| [docs/instagram-account-incident.md](docs/instagram-account-incident.md) | Account incident, recovery evidence, and hold rules — read first |
 | [docs/auth.md](docs/auth.md) | Cookie jar — no OAuth |
 | [docs/paste-inbox.md](docs/paste-inbox.md) | Optional URL queue + ping (not this repo) |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Extraction steps, failures |

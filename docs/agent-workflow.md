@@ -33,9 +33,11 @@ No paid APIs. Scripts already warn if `ollama ps` shows a loaded model.
 
 ## Auth (read this before downloading Instagram)
 
+**September 27 incident: the user reports unlocked after dismissing an explicit automated-behavior warning; extraction remains held.** Read [the incident runbook](instagram-account-incident.md). It overrides older export/probe/resume instructions and historical pacing examples. Do not treat restored playback or a request to finish the queue as permission to clear this hold.
+
 There is no Instagram Connect / Graph API. If `~/.config/ig-cookies.txt` is missing, stop and follow [auth.md](auth.md). Cloud agents cannot complete that step. Never echo the jar.
 
-Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram downloads run through a persistent local safety hold and cross-process request budget; `--ig-gap` adds delay but cannot disable it. Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause or an automated-activity warning, hold the downloader and use local material until the user confirms the warning is clear. [auth.md](auth.md).
+Extract copies the jar before yt-dlp so a failed fetch cannot wipe `sessionid` from the live file. Instagram downloads run through a persistent local safety hold and cross-process request budget; `--ig-gap` adds delay but cannot disable it. Do **not** retry empty-media Instagram URLs in the same run. If Chrome shows a login pause or an automated-activity warning, hold the downloader and use local material. User-confirmed recovery does not itself authorize a restart. [auth.md](auth.md).
 
 Reels now combine ID resolution, caption and media in **one yt-dlp invocation**;
 do not add separate metadata probes before downloading. A single invocation may
@@ -347,10 +349,10 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 ## Security
 
 - Never commit, log, echo, or paste cookie contents. Recipe: [auth.md](auth.md)
-- Re-export cookies only after a reel plays in Chrome logged-in (a checkpoint is not “export harder”)
+- Apply the [incident runbook](instagram-account-incident.md) before any export or probe; normal playback does not authorize resuming after a warning
 - Downloads may contain PII — don't upload externally without asking
 
-**`sessionid`:** a Netscape export that skips HttpOnly cookies will 403 / empty-media even when the post is live. Chrome usually has `sessionid` as HttpOnly. `check-setup.py` green (row present) is **not** a live session — Chrome can be logged out and the row still exists. Human logs into instagram.com first. Then the **agent** runs **one** attended `--cookies-from-browser` (Keychain **Allow**, 1–2 prompts per dump) and keeps an Instagram-only jar. This operator does not use a cookie-extension export; do not ask them to. Extract copies the jar before yt-dlp; a manual probe must still use a **copy**. After empty-media, do not retry that Instagram URL in the same run. Do not commit, echo, or paste cookie files. Recipe: [auth.md](auth.md).
+**`sessionid` (mechanics only, subject to the incident hold):** a Netscape export that skips HttpOnly cookies will 403 / empty-media even when the post is live. Chrome usually has `sessionid` as HttpOnly. `check-setup.py` green (row present) is **not** a live session — Chrome can be logged out and the row still exists. Human logs into instagram.com first. Then the **agent** runs **one** attended `--cookies-from-browser` (Keychain **Allow**, 1–2 prompts per dump) and keeps an Instagram-only jar. This operator does not use a cookie-extension export; do not ask them to. Extract copies the jar before yt-dlp; a manual probe must still use a **copy**. After empty-media, do not retry that Instagram URL in the same run. Do not commit, echo, or paste cookie files. Recipe: [auth.md](auth.md).
 
 ---
 
@@ -360,8 +362,8 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 |---------|--------|------------|
 | Image-only carousel dies before slides | `--print id` / video-first + `set -e` | Current `transcribe-carousel.sh` (URL shortcode + thumbnail-first) |
 | `{id}.txt` grows to tens of GB | `cat` combined Twitter transcript onto itself | Current `transcribe-twitter.sh`; restore `thread.txt` |
-| Empty IG media, post still live | Missing HttpOnly `sessionid`, **or** Chrome logged out (stale row; check-setup still green), **or** the post is gone | Log into Instagram in the browser. One attended dump ([auth.md](auth.md) B). Probe a *copy* of the jar. If a sibling post downloads, treat this ID as gone. Do not multi-dump Keychain. Do **not** retry this URL in the same burst. |
-| Chrome login paused / “try again later” after a batch | Same session hit media endpoints in a burst; retries on empty posts make it worse. yt-dlp `--cookies` on the **live** jar can also delete the `sessionid` row (extract now copies the jar) | Hold the local safety guard. Wait out the timer. Do not resubmit the login form. Do not re-export until a reel plays in Chrome logged-in. Do not run this pipeline against Instagram until then. Incident 2026-08-23: [auth.md](auth.md) |
+| Empty IG media, post still live | Could be stale authentication, unavailable content, account protection or extractor incompatibility; a cookie row is not proof of access | Stop and inspect existing diagnostics. Do not retry, probe a sibling or export cookies as a workaround. Apply the [incident rules](instagram-account-incident.md); do not declare a post deleted merely because a different post works. |
+| Login pause, Locked profile, insecure-email checkpoint or automated-behavior warning | Account restriction or security challenge; exact trigger may be unknown. Cookie-file damage is a separate local issue | Keep the guard held and record the actual message. The user handles recovery. Dismissing a phone warning restored access in the September 27 incident, but does not establish safe automation or authorize a restart. [Incident rules](instagram-account-incident.md) |
 | Instagram comment threads empty | yt-dlp `--write-comments` → `i.instagram.com/api/v1/media/{pk}/comments/` returns `status: fail` (trial 2026-08-19). The working media/info payload has `comment_count` (946 / 3689) but `preview_comments` is empty and `hide_view_all_comment_entrypoint` is true. iOS `app_id` extractor-arg 400s video info. gallery-dl does not support IG comments; not installed here. Graph API is **your** professional media only. | Paste the comment or a screenshot. Open the reel in Instagram yourself. Do not add a second IG client. |
 | jsonl says `fail`, media/note exists | Append-only log; last-write is stale | `extract-status.sh --jsonl FILE` (optionally `--write-recovered`) |
 | Frames skipped | Video >120s | `ffmpeg -ss T -frames:v 1` or `reextract-frames.sh` |
