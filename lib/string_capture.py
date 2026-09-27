@@ -23,6 +23,7 @@ from string_usage import Ledger, UsageBlocked
 
 API_URL = "https://request.usestring.ai/v1/fetch"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+PROVIDER_DEADLINE_SECONDS = 120
 
 
 class CaptureStopped(RuntimeError):
@@ -98,6 +99,35 @@ def fetch_page(url: str, key: str) -> dict:
         return dict(result, data=data, response_bytes=len(raw))
 
 
+def bounded_fetch_page(url: str, key: str) -> dict:
+    """Bound total wall time, including DNS, connection attempts and response reads.
+
+    Socket timeouts alone can restart across connection/read operations. A child
+    process lets the coordinator stop the entire request without another fetch.
+    The key travels through stdin only, never argv, files or logs.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--fetch-worker"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    try:
+        output, _ = proc.communicate(json.dumps({"url": url, "key": key}),
+                                     timeout=PROVIDER_DEADLINE_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        return {"status_code": 0, "error": "provider_deadline_exceeded"}
+    if proc.returncode:
+        return {"status_code": 0, "error": "provider_worker_failed"}
+    try:
+        result = json.loads(output)
+    except (ValueError, UnicodeError):
+        return {"status_code": 0, "error": "provider_worker_invalid_output"}
+    return result if isinstance(result, dict) else {
+        "status_code": 0, "error": "provider_worker_invalid_output"}
+
+
 def write_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
@@ -158,7 +188,7 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
     key = api_key()  # Missing credentials must not consume a reservation.
     attempt = ledger.reserve(run, mid)
     try:
-        receipt = fetch_page(canonical, key)
+        receipt = bounded_fetch_page(canonical, key)
     except Exception:
         ledger.hold("provider_unexpected_failure")
         raise CaptureStopped("provider_unexpected_failure") from None
@@ -299,4 +329,12 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:] == ["--fetch-worker"]:
+        try:
+            request = json.load(sys.stdin)
+            print(json.dumps(fetch_page(request["url"], request["key"])))
+        except Exception:
+            # No provider body, key or unfiltered exception on worker stdout.
+            print(json.dumps({"status_code": 0, "error": "provider_worker_failed"}))
+    else:
+        raise SystemExit(main())

@@ -52,6 +52,11 @@ evade a hold. Production runs must use the same ledger.
 - Stop on missing/unknown billing class, non-success/error response, any charge
   above reservation, or a price increase exceeding four times the first verified
   class. No new run name clears a hold.
+- A separate request worker enforces a 120-second total wall-clock deadline,
+  including connection attempts and response reads. On expiry it is terminated;
+  the charge stays unknown, its reservation remains accounted for, and collection
+  holds. A socket timeout alone does not provide this total deadline. Do not
+  retry the source to discover its charge.
 - CAPTCHA solving, JavaScript forcing, browser actions and remote browser
   WebSocket sessions are disabled. There is no cookie/browser/account/proxy
   fallback and no retry after denial/challenge/rate limit.
