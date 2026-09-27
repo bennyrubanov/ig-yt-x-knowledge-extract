@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -66,6 +67,24 @@ def already_done(kind: str, mid: str, downloads: Path) -> bool:
     return usable(kind, artifacts(kind, mid, downloads))
 
 
+def save_attempt_output(jsonl: Path, kind: str, mid: str, attempt: int, stdout, stderr) -> Path:
+    """Keep diagnostics even when some artifacts survived a failed download.
+
+    Output can include expiring media URLs. Keep these local files private and
+    never put their contents in public issues or PRs.
+    """
+    import tempfile
+
+    folder = jsonl.parent / (jsonl.stem + ".logs")
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix=f"{kind}-{mid}-{attempt}-", suffix=".log", dir=folder)
+    def decoded(value):
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else (value or "")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("--- stdout ---\n" + decoded(stdout) + "\n--- stderr ---\n" + decoded(stderr))
+    return Path(name)
+
+
 def run_one(
     *,
     kind: str,
@@ -93,12 +112,14 @@ def run_one(
         t0 = time.time()
         last_err = ""
         exit_code = 1
+        output_logs = []
         try:
             cmd = igx_cmd(kind) + [url]
             ok = False
             attempts = download_attempts(kind)
             for attempt in range(1, attempts + 1):
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                output_logs.append(str(save_attempt_output(jsonl, kind, mid, attempt, proc.stdout, proc.stderr)))
                 last_err = (proc.stderr or "")[-2000:]
                 exit_code = proc.returncode
                 if proc.returncode == 0:
@@ -121,15 +142,18 @@ def run_one(
                 "exit": exit_code,
                 "elapsed_s": round(time.time() - t0, 1),
                 "got": got,
-                "stderr_tail": last_err if status == "fail" else "",
+                "stderr_tail": last_err if status not in {"ok", "skipped_exists"} else "",
+                "output_logs": output_logs,
             }
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            output_logs.append(str(save_attempt_output(jsonl, kind, mid, attempt, exc.stdout, exc.stderr)))
             got = artifacts(kind, mid, downloads)
             row = {
                 **base,
                 "status": "ok_partial" if usable(kind, got) else "timeout",
                 "elapsed_s": timeout,
                 "got": got,
+                "output_logs": output_logs,
             }
         except Exception as exc:  # noqa: BLE001 — audit row must always write
             row = {
@@ -137,6 +161,7 @@ def run_one(
                 "status": "error",
                 "error": str(exc),
                 "got": artifacts(kind, mid, downloads),
+                "output_logs": output_logs,
             }
         if row["status"] != "blocked":
             log_row(jsonl, row)

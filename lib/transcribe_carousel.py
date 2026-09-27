@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     slides_dir.mkdir(parents=True, exist_ok=True)
     template = str(slides_dir / "slide_%(playlist_index)02d.%(ext)s")
     print(f"[carousel] Downloading slides to {slides_dir} ...", file=sys.stderr)
-    ytdlp(
+    proc = ytdlp(
         [
             "--yes-playlist",
             "--ignore-no-formats-error",
@@ -117,6 +117,13 @@ def main(argv: list[str] | None = None) -> int:
     print("--- Description ---", file=sys.stderr)
     caption = description.read_text(encoding="utf-8", errors="replace") if description.is_file() else ""
     sys.stdout.write(caption if caption.strip() else "(no caption)\n")
+    if proc.returncode:
+        print(
+            f"ERROR: downloader exited {proc.returncode}; retained {slide_count} slide files. "
+            "Review the downloader log before another Instagram request.",
+            file=sys.stderr,
+        )
+        return 1
     if slide_count > 0:
         return 0
     print(f"ERROR: no slides downloaded for {mid}", file=sys.stderr)
