@@ -36,6 +36,31 @@ class IgxTests(unittest.TestCase):
 
 
 class ExtractQueueCmdTests(unittest.TestCase):
+    def test_partial_result_preserves_full_private_diagnostic(self) -> None:
+        from extract_queue import run_one
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = subprocess.CompletedProcess([], 1, 'saved image', 'earlier failure\n' + 'x' * 2500)
+            with patch('extract_queue.already_done', return_value=False), patch('extract_queue.assert_ready'), patch('extract_queue.subprocess.run', return_value=proc) as fetch, patch('extract_queue.artifacts', return_value={}), patch('extract_queue.usable', return_value=True):
+                row = run_one(kind='carousel', mid='AbC', url='https://www.instagram.com/p/AbC/', extra={}, jsonl=root/'audit.jsonl', downloads=root, timeout=10)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(row['status'], 'ok_partial')
+            self.assertTrue(row['stderr_tail'])
+            log = Path(row['output_logs'][0])
+            self.assertIn('earlier failure', log.read_text())
+            self.assertIn('saved image', log.read_text())
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+
+    def test_timeout_preserves_captured_bytes(self) -> None:
+        from extract_queue import run_one
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            timeout = subprocess.TimeoutExpired('download', 10, output=b'partial output', stderr=b'timed out')
+            with patch('extract_queue.already_done', return_value=False), patch('extract_queue.assert_ready'), patch('extract_queue.subprocess.run', side_effect=timeout), patch('extract_queue.artifacts', return_value={}), patch('extract_queue.usable', return_value=False):
+                row = run_one(kind='carousel', mid='AbC', url='https://www.instagram.com/p/AbC/', extra={}, jsonl=root/'audit.jsonl', downloads=root, timeout=10)
+            self.assertEqual(row['status'], 'timeout')
+            self.assertIn('partial output', Path(row['output_logs'][0]).read_text())
+
     def test_igx_cmd_is_this_python_not_bash(self) -> None:
         from extract_queue import igx_cmd
 

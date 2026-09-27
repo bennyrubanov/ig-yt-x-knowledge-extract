@@ -1,5 +1,6 @@
 """Carousel failures must not trigger another extraction request."""
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,11 +9,12 @@ import transcribe_carousel as carousel
 
 
 class CarouselTests(unittest.TestCase):
-    def run_case(self, create_files):
+    def run_case(self, create_files, returncode=0):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             def download(*args, **kwargs):
                 create_files(root / 'AbC' / 'slides')
+                return subprocess.CompletedProcess([], returncode)
             with patch.object(carousel, 'downloads_dir', return_value=root), \
                  patch.object(carousel, 'require_ig_cookies', return_value=root/'cookies'), \
                  patch.object(carousel, 'ytdlp', side_effect=download) as fetch, \
@@ -32,6 +34,12 @@ class CarouselTests(unittest.TestCase):
             (p/'slide_01.jpg').write_bytes(b'image')
             (p/'slide_01.description').write_text('saved caption')
         self.assertEqual(self.run_case(files), (0, 'saved caption'))
+
+    def test_partial_download_retains_caption_but_reports_failure(self):
+        def files(p):
+            (p/'slide_01.jpg').write_bytes(b'image')
+            (p/'slide_01.description').write_text('saved caption')
+        self.assertEqual(self.run_case(files, returncode=1), (1, 'saved caption'))
 
 
 if __name__ == '__main__':
