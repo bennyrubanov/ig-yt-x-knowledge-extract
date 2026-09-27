@@ -93,8 +93,7 @@ class Ledger:
                     actual_micro INTEGER, actual_source TEXT,
                     request_id TEXT, error_code TEXT,
                     usable_media INTEGER NOT NULL DEFAULT 0,
-                    note_path TEXT,
-                    UNIQUE(source_host, source_id)
+                    note_path TEXT, recovery_of INTEGER REFERENCES attempts(attempt_id)
                 );
                 CREATE INDEX IF NOT EXISTS attempts_run ON attempts(run_id);
                 CREATE TABLE IF NOT EXISTS control (
@@ -123,9 +122,56 @@ class Ledger:
                     at REAL NOT NULL, run_id TEXT NOT NULL, code TEXT NOT NULL,
                     note TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS recovery_allowances (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    at REAL NOT NULL, run_id TEXT NOT NULL,
+                    review_note TEXT NOT NULL
+                );
             """)
+        self._migrate_recovery_schema()
         if self.path.exists():
             self.path.chmod(0o600)
+
+    def _migrate_recovery_schema(self):
+        """Replace the legacy unconditional source UNIQUE with audited partial indexes.
+
+        The migration holds a SQLite write lock for its full duration and keeps
+        attempt IDs stable so events and reconciliations still point at history.
+        It must not run while a capture coordinator is active.
+        """
+        with self._db() as db:
+            if "recovery_of" not in {r[1] for r in db.execute("PRAGMA table_info(attempts)")}:
+                db.execute("PRAGMA foreign_keys=OFF")
+                db.execute("BEGIN IMMEDIATE")
+                try:
+                    if "recovery_of" not in {r[1] for r in db.execute("PRAGMA table_info(attempts)")}:
+                        db.execute("CREATE TABLE attempts_new ("
+                                   "attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                                   "run_id TEXT NOT NULL REFERENCES runs(run_id), "
+                                   "source_id TEXT NOT NULL, source_host TEXT NOT NULL, "
+                                   "reserved_at REAL NOT NULL, reserve_micro INTEGER NOT NULL, "
+                                   "expected_class TEXT, settled_at REAL, status_code INTEGER, "
+                                   "billing_class TEXT, estimate_micro INTEGER, "
+                                   "actual_micro INTEGER, actual_source TEXT, request_id TEXT, "
+                                   "error_code TEXT, usable_media INTEGER NOT NULL DEFAULT 0, "
+                                   "note_path TEXT, recovery_of INTEGER REFERENCES attempts(attempt_id))")
+                        db.execute("INSERT INTO attempts_new SELECT attempts.*,NULL FROM attempts")
+                        db.execute("DROP TABLE attempts")
+                        db.execute("ALTER TABLE attempts_new RENAME TO attempts")
+                    if db.execute("PRAGMA foreign_key_check").fetchone():
+                        raise RuntimeError("recovery schema migration failed foreign-key check")
+                except BaseException:
+                    db.rollback()
+                    raise
+                else:
+                    db.commit()
+                finally:
+                    db.execute("PRAGMA foreign_keys=ON")
+            db.execute("CREATE INDEX IF NOT EXISTS attempts_run ON attempts(run_id)")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS attempts_one_original "
+                       "ON attempts(source_host,source_id) WHERE recovery_of IS NULL")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS attempts_one_recovery "
+                       "ON attempts(recovery_of) WHERE recovery_of IS NOT NULL")
 
     @contextmanager
     def _db(self):
@@ -216,7 +262,9 @@ class Ledger:
 
     def reserve(self, run_id: str, source_id: str,
                 source_host: str = "www.instagram.com", *,
-                expected_billing_class: str | None = None) -> int:
+                expected_billing_class: str | None = None,
+                recovery_of: int | None = None,
+                recovery_source_url: str | None = None) -> int:
         run_id = _token(run_id, "run_id")
         source_id = _token(source_id, "source_id")
         if not isinstance(source_host, str) or not _HOST.fullmatch(source_host):
@@ -233,14 +281,30 @@ class Ledger:
                 raise UsageBlocked("global_hold:" + hold)
             if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone():
                 raise UsageBlocked("pending_attempt_requires_reconciliation")
-            if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
-                          (source_host, source_id)).fetchone():
-                raise UsageBlocked("source_already_attempted")
+            if recovery_of is None:
+                if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
+                              (source_host, source_id)).fetchone():
+                    raise UsageBlocked("source_already_attempted")
+            else:
+                if isinstance(recovery_of, bool) or not isinstance(recovery_of, int) or recovery_of < 1:
+                    raise ValueError("recovery_of must be an attempt ID")
+                parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?", (recovery_of,)).fetchone()
+                parent_source = db.execute("SELECT source_url FROM reconciliations WHERE attempt_id=?",
+                                           (recovery_of,)).fetchone()
+                allowance = db.execute("SELECT 1 FROM recovery_allowances WHERE parent_attempt_id=?",
+                                       (recovery_of,)).fetchone()
+                if (not parent or not allowance or parent["run_id"] != run_id
+                        or parent["source_host"] != source_host or parent["source_id"] != source_id
+                        or not parent_source or parent_source[0] != recovery_source_url
+                        or parent["recovery_of"] is not None
+                        or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
+                    raise UsageBlocked("recovery_not_authorized_or_already_used")
             last = db.execute("SELECT MAX(reserved_at) FROM attempts").fetchone()[0]
             if last is not None and now - last < run["min_gap_seconds"]:
                 raise UsageBlocked("minimum_gap", run["min_gap_seconds"] - (now - last))
             rows = db.execute("SELECT * FROM attempts WHERE run_id=?", (run_id,)).fetchall()
-            if len(rows) >= run["max_requests"]:
+            original_count = sum(row["recovery_of"] is None for row in rows)
+            if recovery_of is None and original_count >= run["max_requests"]:
                 self._hold(db, "request_limit", run_id)
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
@@ -254,12 +318,47 @@ class Ledger:
                 self._hold(db, "burn_limit", run_id)
                 raise UsageBlocked("burn_limit")
             cursor = db.execute("INSERT INTO attempts(run_id,source_id,source_host,reserved_at,"
-                                "reserve_micro,expected_class) VALUES(?,?,?,?,?,?)",
+                                "reserve_micro,expected_class,recovery_of) VALUES(?,?,?,?,?,?,?)",
                                 (run_id, source_id, source_host, now, run["max_request_micro"],
-                                 expected_billing_class))
+                                 expected_billing_class, recovery_of))
             attempt_id = cursor.lastrowid
-            self._event(db, "reserved", run_id, attempt_id)
+            self._event(db, "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
             return attempt_id
+
+    def authorize_lost_response_recovery(self, run_id: str, parent_attempt_id: int,
+                                         review_note: str) -> dict:
+        """Grant one exact-source second request for a paid, lost local response.
+
+        This is an explicit, reviewed exception to the original request count,
+        not a new budget or a general retry switch. It makes no network request.
+        """
+        run_id = _token(run_id, "run_id")
+        if (isinstance(parent_attempt_id, bool) or not isinstance(parent_attempt_id, int)
+                or parent_attempt_id < 1):
+            raise ValueError("parent_attempt_id must be positive")
+        if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
+                or any(ord(ch) < 32 for ch in review_note)):
+            raise ValueError("review_note must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold:
+                raise UsageBlocked("global_hold:" + hold)
+            parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            rec = db.execute("SELECT * FROM reconciliations WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            if (not parent or parent["run_id"] != run_id or parent["recovery_of"] is not None
+                    or not rec or rec["prior_pending"] != 1 or rec["portal_status"] != 200
+                    or rec["actual_micro"] is None or parent["actual_micro"] != rec["actual_micro"]
+                    or parent["status_code"] is not None or parent["usable_media"]
+                    or parent["note_path"] or parent["source_host"] != "www.instagram.com"):
+                raise UsageBlocked("not_a_reconciled_lost_response")
+            if db.execute("SELECT 1 FROM recovery_allowances WHERE run_id=?", (run_id,)).fetchone():
+                raise UsageBlocked("run_recovery_allowance_already_granted")
+            if db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (parent_attempt_id,)).fetchone():
+                raise UsageBlocked("recovery_already_attempted")
+            db.execute("INSERT INTO recovery_allowances VALUES(?,?,?,?)",
+                       (parent_attempt_id, self._clock(), run_id, review_note))
+            self._event(db, "lost_response_recovery_authorized", run_id, parent_attempt_id)
+        return self.report(run_id)
 
     def complete(self, attempt_id: int, status_code: int | None,
                  billed_request_type: str | None = None, *, actual_usd: object | None = None,
@@ -366,15 +465,19 @@ class Ledger:
         rows = evidence.get("rows")
         if not isinstance(rows, list) or not rows:
             raise ValueError("portal evidence has no rows")
-        seen = {}
+        parsed = []
         total = 0
         for item in rows:
             if not isinstance(item, dict):
                 raise ValueError("portal row must be an object")
             source_id = _token(item.get("source_id"), "source_id")
             match = _SOURCE_URL.fullmatch(item.get("url", "")) if isinstance(item.get("url"), str) else None
-            if not match or match.group(1) != source_id or source_id in seen:
+            if not match or match.group(1) != source_id:
                 raise ValueError("portal URL/ID mismatch or duplicate")
+            explicit_id = item.get("attempt_id")
+            if explicit_id is not None and (isinstance(explicit_id, bool) or not isinstance(explicit_id, int)
+                                            or explicit_id < 1):
+                raise ValueError("portal attempt_id must be positive")
             if item.get("status_code") != 200 or item.get("result") != "OK" or item.get("portal_type") != "Fetch":
                 raise ValueError("portal row is not a successful Fetch")
             if item.get("billing_class") is not None:
@@ -386,17 +489,31 @@ class Ledger:
             if portal_time.tzinfo is None:
                 raise ValueError("portal row needs a timestamp with timezone")
             actual = _money(item.get("actual_usd"), positive=True)
-            seen[source_id] = (item, portal_time.timestamp(), actual)
+            parsed.append((item, portal_time.timestamp(), actual))
             total += actual
         if total != _money(evidence.get("total_actual_usd")):
             raise ValueError("portal total differs from its rows")
         digest = hashlib.sha256(raw).hexdigest()
         with self._write() as db:
             attempts = db.execute("SELECT * FROM attempts WHERE run_id=? ORDER BY attempt_id", (run_id,)).fetchall()
-            if not attempts or {row["source_id"] for row in attempts} != set(seen):
+            if not attempts or len(attempts) != len(parsed):
+                raise ValueError("portal rows must match every run attempt exactly")
+            matched = {}
+            for item, portal_at, actual in parsed:
+                if item.get("attempt_id") is not None:
+                    candidates = [row for row in attempts if row["attempt_id"] == item["attempt_id"]]
+                else:
+                    candidates = [row for row in attempts if row["source_id"] == item["source_id"]]
+                if len(candidates) != 1 or candidates[0]["source_id"] != item["source_id"]:
+                    raise ValueError("portal rows need exact attempt_id for repeated sources")
+                attempt_id = candidates[0]["attempt_id"]
+                if attempt_id in matched:
+                    raise ValueError("portal rows duplicate an attempt")
+                matched[attempt_id] = (item, portal_at, actual)
+            if len(matched) != len(attempts):
                 raise ValueError("portal rows must match every run attempt exactly")
             for row in attempts:
-                item, portal_at, actual = seen[row["source_id"]]
+                item, portal_at, actual = matched[row["attempt_id"]]
                 if row["source_host"] != "www.instagram.com":
                     raise ValueError("unexpected source host")
                 if abs(portal_at - row["reserved_at"]) > 15 * 60:
@@ -477,6 +594,7 @@ class Ledger:
             rows = db.execute("SELECT * FROM attempts WHERE run_id=? ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM attempts ORDER BY attempt_id").fetchall()
             events = db.execute("SELECT at,run_id,attempt_id,code FROM events WHERE run_id=? ORDER BY event_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,attempt_id,code FROM events ORDER BY event_id").fetchall()
             reviews = db.execute("SELECT at,run_id,code,note FROM reviews WHERE run_id=? ORDER BY review_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,code,note FROM reviews ORDER BY review_id").fetchall()
+            allowances = db.execute("SELECT parent_attempt_id,at,run_id,review_note FROM recovery_allowances WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT parent_attempt_id,at,run_id,review_note FROM recovery_allowances ORDER BY at").fetchall()
             recs = db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations WHERE attempt_id IN (SELECT attempt_id FROM attempts WHERE run_id=?) ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations ORDER BY attempt_id").fetchall()
             runs = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM runs ORDER BY created_at").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
@@ -497,6 +615,7 @@ class Ledger:
             "filed_count": sum(r["note_path"] is not None for r in rows),
             "attempt_records": [{"attempt_id": r["attempt_id"], "run_id": r["run_id"],
                           "source_id": r["source_id"], "source_host": r["source_host"],
+                          "recovery_of": r["recovery_of"],
                           "pending": r["settled_at"] is None,
                           "status_code": r["status_code"], "expected_billing_class": r["expected_class"],
                           "billing_class": r["billing_class"],
@@ -507,5 +626,6 @@ class Ledger:
                           "cost_envelope_micro": self._envelope(r)} for r in rows],
             "events": [dict(e) for e in events],
             "reviews": [dict(r) for r in reviews],
+            "recovery_allowances": [dict(r) for r in allowances],
             "reconciliations": [dict(r) for r in recs],
         }

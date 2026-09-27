@@ -5,6 +5,8 @@ import tempfile
 import threading
 import unittest
 import json
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -304,6 +306,119 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicts with existing actual"):
             self.ledger.reconcile_portal("queue1", path, "Reviewed conflicting snapshot")
         self.assertEqual(self.ledger.report("queue1")["known_actual_micro"], 6000)
+
+    def test_one_recovery_slot_keeps_budget_and_original_count(self):
+        self.ledger.create_run("queue1", "0.015", max_requests=2, min_gap_seconds=0)
+        parent = self.ledger.reserve("queue1", "lost123")
+        self.ledger.hold("provider_wall_time_exceeded")
+        path = self.portal_evidence(["lost123"], total="0.003")
+        self.ledger.reconcile_portal("queue1", path, "Reviewed portal-paid lost response")
+        self.ledger.resume_reviewed_timeout("queue1", "Worker stopped and portal charge confirmed")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/lost123/")
+        self.ledger.authorize_lost_response_recovery("queue1", parent,
+            "One explicit extra call for paid response lost locally")
+        with self.assertRaisesRegex(UsageBlocked, "run_recovery_allowance"):
+            self.ledger.authorize_lost_response_recovery("queue1", parent, "Second attempt is prohibited")
+        other = self.ledger.reserve("queue1", "other456")
+        self.ledger.complete(other, 200, "request_premium")
+        self.now[0] += 20
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue1", "wrong789", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/wrong789/")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/p/lost123/")
+        recovery = self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                       recovery_source_url="https://www.instagram.com/reel/lost123/")
+        self.assertEqual(self.ledger.report("queue1")["attempt_count"], 3)
+        self.assertEqual(self.ledger.report("queue1")["cost_envelope_micro"], 15000)
+        self.assertEqual(self.ledger.report("queue1")["attempt_records"][-1]["recovery_of"], parent)
+        self.ledger.complete(recovery, 200, "request_premium")
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue1", "lost123")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/lost123/")
+        self.assertEqual(self.ledger.report("queue1")["runs"][0]["max_requests"], 2)
+
+    def test_recovery_fails_if_exact_budget_cannot_reserve(self):
+        self.ledger.create_run("queue1", "0.006", max_requests=1, min_gap_seconds=0)
+        parent = self.ledger.reserve("queue1", "lost123")
+        self.ledger.hold("provider_wall_time_exceeded")
+        self.ledger.reconcile_portal("queue1", self.portal_evidence(["lost123"], total="0.003"),
+                                     "Reviewed portal-paid lost response")
+        self.ledger.resume_reviewed_timeout("queue1", "Worker stopped and portal charge confirmed")
+        self.ledger.authorize_lost_response_recovery("queue1", parent,
+            "One explicit extra call for paid response lost locally")
+        with self.assertRaisesRegex(UsageBlocked, "budget_limit"):
+            self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/lost123/")
+        self.assertEqual(self.ledger.report("queue1")["attempt_count"], 1)
+
+    def test_recovery_duplicate_source_portal_rows_require_attempt_ids(self):
+        self.ledger.create_run("queue1", "0.02", max_requests=1, min_gap_seconds=0)
+        parent = self.ledger.reserve("queue1", "lost123")
+        self.ledger.hold("provider_wall_time_exceeded")
+        path = self.portal_evidence(["lost123"], total="0.003")
+        old_row = json.loads(path.read_text())["rows"][0]
+        self.ledger.reconcile_portal("queue1", path, "Reviewed portal-paid lost response")
+        self.ledger.resume_reviewed_timeout("queue1", "Worker stopped and portal charge confirmed")
+        self.ledger.authorize_lost_response_recovery("queue1", parent,
+            "One explicit extra call for paid response lost locally")
+        self.now[0] += 20
+        recovery = self.ledger.reserve("queue1", "lost123", recovery_of=parent,
+                                       recovery_source_url="https://www.instagram.com/reel/lost123/")
+        self.ledger.complete(recovery, 200, "request_premium")
+        new_row = dict(old_row, attempt_id=recovery,
+                       time_local=datetime.fromtimestamp(self.now[0], timezone.utc).isoformat())
+        evidence = {"evidence_source": "https://portal.usestring.ai/web-access", "run_id": "queue1",
+                    "total_actual_usd": "0.006", "rows": [old_row, new_row]}
+        path.write_text(json.dumps(evidence))
+        with self.assertRaisesRegex(ValueError, "exact attempt_id"):
+            self.ledger.reconcile_portal("queue1", path, "Reviewed two exact charges")
+        evidence["rows"][0]["attempt_id"] = parent
+        path.write_text(json.dumps(evidence))
+        result = self.ledger.reconcile_portal("queue1", path, "Reviewed two exact charges")
+        self.assertEqual(result["known_actual_micro"], 6000)
+        self.assertEqual(len(result["reconciliations"]), 2)
+
+    def test_legacy_unique_schema_migrates_without_losing_attempt_ids(self):
+        path = self.path.parent / "legacy.sqlite"
+        with closing(sqlite3.connect(path)) as db:
+            db.executescript("""
+                CREATE TABLE runs(run_id TEXT PRIMARY KEY,created_at REAL NOT NULL,budget_micro INTEGER NOT NULL,
+                    max_requests INTEGER NOT NULL,max_request_micro INTEGER NOT NULL,min_gap_seconds REAL NOT NULL,
+                    burn_limit_micro INTEGER NOT NULL,burn_window_seconds REAL NOT NULL);
+                CREATE TABLE attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),source_id TEXT NOT NULL,
+                    source_host TEXT NOT NULL,reserved_at REAL NOT NULL,reserve_micro INTEGER NOT NULL,
+                    expected_class TEXT,settled_at REAL,status_code INTEGER,billing_class TEXT,
+                    estimate_micro INTEGER,actual_micro INTEGER,actual_source TEXT,request_id TEXT,
+                    error_code TEXT,usable_media INTEGER NOT NULL DEFAULT 0,note_path TEXT,
+                    UNIQUE(source_host,source_id));
+                CREATE TABLE reconciliations(attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    at REAL NOT NULL,evidence_sha256 TEXT NOT NULL,evidence_path TEXT NOT NULL,
+                    review_note TEXT NOT NULL,source_url TEXT NOT NULL,portal_time TEXT NOT NULL,
+                    portal_status INTEGER NOT NULL,portal_type TEXT NOT NULL,actual_micro INTEGER NOT NULL,
+                    prior_pending INTEGER NOT NULL,prior_status INTEGER,prior_billing_class TEXT,
+                    prior_actual_micro INTEGER,prior_error_code TEXT);
+                INSERT INTO runs VALUES('queue1',1000,1000000,26,6000,0,30000,60);
+                INSERT INTO attempts(run_id,source_id,source_host,reserved_at,reserve_micro)
+                    VALUES('queue1','lost123','www.instagram.com',1000,6000);
+                INSERT INTO reconciliations VALUES(1,1001,'digest','/tmp/evidence','reviewed',
+                    'https://www.instagram.com/reel/lost123/','1970-01-01T00:16:40+00:00',
+                    200,'Fetch',3000,1,NULL,NULL,NULL,NULL);
+            """)
+        migrated = Ledger(path, clock=lambda: self.now[0])
+        report = migrated.report("queue1")
+        self.assertEqual(report["attempt_records"][0]["attempt_id"], 1)
+        self.assertIsNone(report["attempt_records"][0]["recovery_of"])
+        self.assertEqual(report["reconciliations"][0]["attempt_id"], 1)
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 1)
 
 
 if __name__ == "__main__":

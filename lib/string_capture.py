@@ -177,7 +177,8 @@ def cached_manifest(directory: Path, shortcode: str) -> dict | None:
         return None
 
 
-def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: Path | None = None) -> dict:
+def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: Path | None = None,
+            recovery_of: int | None = None) -> dict:
     canonical, mid = canonical_source(url)
     cached = cached_manifest(directory, mid)
     if cached:
@@ -186,7 +187,8 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         return {"cached": True, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
                 "usage": ledger.report(run)}
     key = api_key()  # Missing credentials must not consume a reservation.
-    attempt = ledger.reserve(run, mid)
+    attempt = ledger.reserve(run, mid, recovery_of=recovery_of,
+                             recovery_source_url=canonical if recovery_of is not None else None)
     try:
         receipt = bounded_fetch_page(canonical, key)
     except Exception:
@@ -227,7 +229,8 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
                           "bytes": dest.stat().st_size, "probe": probe})
         manifest = {"source_id": mid, "source_url": canonical, "provider": "String public fetch",
                     "captured_at": datetime.now(timezone.utc).isoformat(), "run_id": run,
-                    "attempt_id": attempt, "caption": media.get("caption", ""), "files": files,
+                    "attempt_id": attempt, "recovery_of": recovery_of,
+                    "caption": media.get("caption", ""), "files": files,
                     "capture_complete": True, "personal_instagram_credentials_used": False,
                     "audio_metadata": {k:v for k,v in (media.get("audio") or {}).items() if k != "url"},
                     "soundtrack_note": "An image-only capture does not establish carousel soundtrack availability."}
@@ -293,6 +296,8 @@ def main(argv=None) -> int:
     fetch = sub.add_parser("fetch", help="One metered public fetch, then anonymous validated media; no retries")
     fetch.add_argument("url")
     fetch.add_argument("--run", required=True)
+    fetch.add_argument("--recover-attempt", type=int,
+                       help="One reviewed exact-source recovery of a paid request with a lost local response")
     fetch.add_argument("--downloads", type=Path, default=downloads_dir())
     fetch.add_argument("--shared-ledger", type=Path,
                        default=Path(load_local_env()["STRING_USAGE_LEDGER"]).expanduser()
@@ -306,6 +311,11 @@ def main(argv=None) -> int:
     resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
     resume.add_argument("--run", required=True)
     resume.add_argument("--review-note", required=True)
+    recovery = sub.add_parser("authorize-lost-response-recovery",
+                              help="Offline one-time allowance for a portal-confirmed paid response lost locally")
+    recovery.add_argument("--run", required=True)
+    recovery.add_argument("--attempt-id", type=int, required=True)
+    recovery.add_argument("--review-note", required=True)
     local = sub.add_parser("process", help="Transcribe/OCR verified local capture; no source requests")
     local.add_argument("manifest", type=Path)
     local.add_argument("--model", choices=("base", "small", "medium"), default="small")
@@ -328,8 +338,12 @@ def main(argv=None) -> int:
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
             elif args.command == "resume-reviewed-timeout":
                 result = ledger.resume_reviewed_timeout(args.run, args.review_note)
+            elif args.command == "authorize-lost-response-recovery":
+                result = ledger.authorize_lost_response_recovery(args.run, args.attempt_id,
+                                                                 args.review_note)
             else:
-                result = capture(args.url, args.run, ledger, args.downloads, args.shared_ledger)
+                result = capture(args.url, args.run, ledger, args.downloads, args.shared_ledger,
+                                 recovery_of=args.recover_attempt)
         print(json.dumps(result, indent=2))
         return 0
     except (CaptureStopped, MediaError, UsageBlocked) as exc:
