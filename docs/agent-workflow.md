@@ -452,3 +452,21 @@ Sparse or garbled OCR does not establish that a video lacks readable text. Inspe
 the relevant local frames directly. When a short subtitle falls between one-second
 frames, extract a targeted sub-second still from the existing video and amend the
 source note; do not download the source again or leave a resolvable detail unknown.
+
+
+### Logged-in downloader compatibility before another collection attempt
+
+An HTTP400/404 during Instagram video-info extraction is not enough to diagnose
+expired cookies or a blocked account. Check the exact executable/version and
+upstream changes without contacting Instagram first. yt-dlp 2026.08.19 includes
+[the logged-in extraction fix](https://github.com/yt-dlp/yt-dlp/commit/1f1101d0dc8a0ee316540fc938edbaca43e4977b)
+missing from 2026.07.04. A relevant update is a repair candidate, not proof the
+failure is resolved; a reviewed attempt can still fail and must preserve the hold.
+
+For an isolated update, install the intended official version into the existing
+local environment, then activate that environment before invoking `igx`; otherwise
+`PATH` may silently select an older system `yt-dlp`. Verify `command -v yt-dlp` and
+`yt-dlp --version` locally. Updating does not clear the persistent guard, request
+history or daily budget, and is not a reason for another cookie export or a loop of
+failed URL probes. If the updated downloader fails too, retain its diagnostic and
+continue cached/caption/primary-source work with honest coverage limits.
