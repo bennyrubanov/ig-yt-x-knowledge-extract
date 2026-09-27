@@ -49,6 +49,17 @@ Keep URL, saved time and user intent in the queue. Remove personal Instagram cre
 
 A third-party saving app is not evidence of guaranteed full-media retrieval or safe use of a personal account. Verify the actual export contains the requested video/audio and source reference; a preview or bookmarked URL is insufficient for transcription or music capture. This is a proposed redesign, not an implemented fallback or authorization to send private material to a service.
 
+## Subsequent bounded evaluation
+
+The user explicitly requested a test of capture without their Instagram cookies.
+One public reel was retrieved through String plus an anonymous media GET, with
+full video duration and useful audio verified locally. Two inspected mymind
+cards sent playback to Instagram rather than providing stored video. Read the
+[evaluation findings and limits](agent-workflow.md#credentialless-capture-evaluation--september-27-2026).
+This is evidence that a credentialless acquisition path can work; it is not a
+production integration, blanket permission for collection or a reason to clear
+the authenticated extractor hold. Private evidence stays in the local handoff.
+
 ## Related guidance
 
 - [Agent entry point](../AGENTS.md)
