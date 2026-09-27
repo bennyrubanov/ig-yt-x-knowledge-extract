@@ -4,6 +4,8 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from string_usage import Ledger, UsageBlocked
@@ -182,6 +184,126 @@ class StringUsageTests(unittest.TestCase):
         self.ledger.mark_media(attempt)
         self.ledger.mark_filed(attempt, note)
         self.assertEqual(self.ledger.report()["filed_count"], 1)
+
+    def portal_evidence(self, sources, *, total=None):
+        rows = [{"source_id": source, "url": f"https://www.instagram.com/reel/{source}/",
+                 "time_local": datetime.fromtimestamp(self.now[0], timezone.utc).isoformat(),
+                 "status_code": 200, "result": "OK", "portal_type": "Fetch",
+                 "billing_class": None, "actual_usd": "0.003"} for source in sources]
+        evidence = {"evidence_source": "https://portal.usestring.ai/web-access",
+                    "run_id": "queue1", "total_actual_usd": total or str(.003 * len(rows)),
+                    "rows": rows}
+        path = self.path.parent / "portal.json"
+        path.write_text(json.dumps(evidence))
+        return path
+
+    def test_portal_reconciliation_preserves_original_class_and_pending_history(self):
+        self.run_with(min_gap_seconds=0)
+        first = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(first, 200, "request_premium")
+        second = self.ledger.reserve("queue1", "def456")
+        self.ledger.hold("provider_wall_time_exceeded")
+        path = self.portal_evidence(["abc123", "def456"], total="0.006")
+        with self.assertRaises(UsageBlocked):
+            self.ledger.resume_reviewed_timeout("queue1", "Reviewed exact portal rows")
+        report = self.ledger.reconcile_portal("queue1", path, "Reviewed exact portal rows")
+        self.assertEqual(report["known_actual_micro"], 6000)
+        self.assertEqual(report["estimated_micro"], 3000)
+        self.assertEqual(report["cost_envelope_micro"], 6000)
+        self.assertEqual(report["unknown_actual_count"], 0)
+        self.assertEqual(report["pending_count"], 0)
+        self.assertEqual(report["attempt_records"][0]["billing_class"], "request_premium")
+        self.assertIsNone(report["attempt_records"][1]["billing_class"])
+        self.assertEqual(report["reconciliations"][1]["prior_pending"], 1)
+        self.assertIsNone(report["reconciliations"][1]["prior_status"])
+        self.assertEqual(report["global_hold"], "provider_wall_time_exceeded")
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.reserve("queue1", "ghi789")
+        resumed = self.ledger.resume_reviewed_timeout("queue1", "Reviewed portal charge and lost local response")
+        self.assertIsNone(resumed["global_hold"])
+        self.assertEqual(resumed["reviews"][0]["code"], "reviewed_timeout_resume")
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue1", "def456")
+        self.assertIsInstance(self.ledger.reserve("queue1", "ghi789"), int)
+        self.assertEqual(second, 2)
+
+    def test_portal_reconciliation_rejects_incomplete_or_mismatched_evidence_atomically(self):
+        self.run_with(min_gap_seconds=0)
+        first = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(first, 200, "request_premium")
+        self.ledger.reserve("queue1", "def456")
+        path = self.portal_evidence(["abc123"], total="0.003")
+        with self.assertRaisesRegex(ValueError, "every run attempt"):
+            self.ledger.reconcile_portal("queue1", path, "Reviewed portal rows")
+        evidence = json.loads(path.read_text())
+        evidence["rows"].append(dict(evidence["rows"][0], source_id="def456", url="https://www.instagram.com/reel/wrong/"))
+        path.write_text(json.dumps(evidence))
+        with self.assertRaisesRegex(ValueError, "URL/ID mismatch"):
+            self.ledger.reconcile_portal("queue1", path, "Reviewed portal rows")
+        evidence["rows"][1]["url"] = "https://www.instagram.com/reel/def456/"
+        evidence["rows"][1]["actual_usd"] = "0.009"
+        evidence["total_actual_usd"] = "0.012"
+        path.write_text(json.dumps(evidence))
+        with self.assertRaisesRegex(ValueError, "exceeds reservation"):
+            self.ledger.reconcile_portal("queue1", path, "Reviewed portal rows")
+        self.assertEqual(self.ledger.report("queue1")["reconciliations"], [])
+        self.assertEqual(self.ledger.report("queue1")["pending_count"], 1)
+
+    def test_denial_or_anomaly_hold_cannot_be_resumed_by_portal_review(self):
+        for hold_reason in ("provider_denial", "unknown_billing_class", "cost_above_reservation"):
+            with self.subTest(hold_reason=hold_reason):
+                temp = tempfile.TemporaryDirectory()
+                self.addCleanup(temp.cleanup)
+                ledger = Ledger(Path(temp.name) / "ledger.sqlite", clock=lambda: self.now[0])
+                ledger.create_run("queue1", ".03")
+                ledger.reserve("queue1", "abc123")
+                ledger.hold(hold_reason)
+                ledger.reconcile_portal("queue1", self.portal_evidence(["abc123"], total="0.003"),
+                                        "Reviewed exact portal row")
+                with self.assertRaisesRegex(UsageBlocked, "hold_not_eligible"):
+                    ledger.resume_reviewed_timeout("queue1", "Reviewed exact portal row")
+                self.assertEqual(ledger.report()["global_hold"], hold_reason)
+
+    def test_other_latched_hold_event_prevents_timeout_resume(self):
+        self.run_with()
+        self.ledger.reserve("queue1", "abc123")
+        self.ledger.hold("provider_wall_time_exceeded")
+        self.ledger.hold("media_capture_or_validation_failed")
+        self.ledger.reconcile_portal("queue1", self.portal_evidence(["abc123"], total="0.003"),
+                                     "Reviewed exact portal row")
+        with self.assertRaisesRegex(UsageBlocked, "other_safety_hold"):
+            self.ledger.resume_reviewed_timeout("queue1", "Reviewed exact portal row")
+
+    def test_later_portal_snapshot_reuses_immutable_old_audit_and_adds_new_charges(self):
+        self.run_with(min_gap_seconds=0)
+        self.ledger.reserve("queue1", "abc123")
+        self.ledger.hold("provider_wall_time_exceeded")
+        path = self.portal_evidence(["abc123"], total="0.003")
+        first = self.ledger.reconcile_portal("queue1", path, "Reviewed first timeout in portal")
+        self.ledger.resume_reviewed_timeout("queue1", "Reviewed first timeout and killed worker")
+        old_digest = first["reconciliations"][0]["evidence_sha256"]
+        self.now[0] += 20
+        second = self.ledger.reserve("queue1", "def456")
+        self.ledger.complete(second, 200, "request_premium")
+        evidence = json.loads(path.read_text())
+        evidence["rows"].append({"source_id": "def456", "url": "https://www.instagram.com/reel/def456/",
+                                 "time_local": datetime.fromtimestamp(self.now[0], timezone.utc).isoformat(),
+                                 "status_code": 200, "result": "OK", "portal_type": "Fetch",
+                                 "billing_class": None, "actual_usd": "0.003"})
+        evidence["total_actual_usd"] = "0.006"
+        path.write_text(json.dumps(evidence))
+        updated = self.ledger.reconcile_portal("queue1", path, "Reviewed complete portal snapshot")
+        self.assertEqual(updated["known_actual_micro"], 6000)
+        self.assertEqual(updated["reconciliations"][0]["evidence_sha256"], old_digest)
+        self.assertNotEqual(updated["reconciliations"][1]["evidence_sha256"], old_digest)
+        self.assertEqual(len(updated["reconciliations"]), 2)
+        self.assertEqual(len(self.ledger.reconcile_portal("queue1", path, "Reviewed again")["reconciliations"]), 2)
+        evidence["rows"][0]["actual_usd"] = "0.002"
+        evidence["total_actual_usd"] = "0.005"
+        path.write_text(json.dumps(evidence))
+        with self.assertRaisesRegex(ValueError, "conflicts with existing actual"):
+            self.ledger.reconcile_portal("queue1", path, "Reviewed conflicting snapshot")
+        self.assertEqual(self.ledger.report("queue1")["known_actual_micro"], 6000)
 
 
 if __name__ == "__main__":

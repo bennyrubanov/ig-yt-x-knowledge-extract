@@ -72,6 +72,49 @@ Do not mark an absent cost as zero. The fixed monthly subscription is separate.
 Reconcile with the portal; the API adapter does not change billing plans,
 auto-top-up or free-credit settings. [Provider pricing](https://portal.usestring.ai/docs/get-started/pricing).
 
+### Reviewed portal reconciliation after an interrupted request
+
+If a coordinator was terminated with a request still reserved, first stop its
+worker and inspect the signed-in String Usage table. Save a local JSON evidence
+file with `evidence_source: "https://portal.usestring.ai/web-access"`, the exact
+`run_id`, `total_actual_usd`, and one `rows` entry for **every** attempt in the
+run. Each row needs the exact canonical Instagram `url`, `source_id`, portal
+`time_local` with timezone, `status_code`, `result`, `portal_type`, and
+`actual_usd`. Set `billing_class` to `null` when the portal only says “Fetch”;
+the dollar amount does not establish a premium class. Keep the evidence file
+private. Reconciliation makes no network request.
+
+```bash
+python scripts/igx.py public-capture reconcile-portal \
+  --run approved-queue-run --evidence /absolute/private/portal-billing.json \
+  --review-note 'Matched every run attempt against the portal Usage table'
+python scripts/igx.py public-capture usage --run approved-queue-run
+python scripts/igx.py public-capture resume-reviewed-timeout \
+  --run approved-queue-run \
+  --review-note 'Worker terminated; all attempts charged and reviewed in portal'
+```
+
+The first command checks the exact attempt set, source IDs, reservation times,
+successful portal status, itemized charges, total and original per-request
+ceiling in one transaction. It stores the evidence path and SHA-256 digest,
+review note, and the original pending/status/class/cost fields in an audit
+table before recording actual charges. Existing REST billing classes remain
+unchanged; a class missing from the portal remains unknown. Reconciliation
+does not itself release any hold. A later, complete portal snapshot can add
+new attempts to the same run; earlier audit entries stay unchanged and any
+conflicting charge is rejected.
+
+The second command releases only a `provider_wall_time_exceeded` hold after
+all ledger attempts have known actual charges and the interrupted reservation
+has been reconciled. Denial, billing anomalies, media failures and other holds
+remain blocked. Source deduplication, the approved run budget, request limit,
+spacing and burn allowance remain in force. The lost provider response and
+media are still unavailable locally; a portal HTTP 200 does not create a
+capture or authorize an automatic retry. The shared String JSONL mirror logs
+requests only; do not append a reconciliation as another request or infer a
+charge from its original billing class. Reconcile that mirror separately with
+an audited correction to the original request records.
+
 The currently exposed MCP result may omit String's outer billing header. The
 production adapter uses REST and captures `x-billed-request-type` from the
 provider response before any media processing. It does not infer that field

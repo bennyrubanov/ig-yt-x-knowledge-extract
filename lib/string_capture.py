@@ -299,6 +299,13 @@ def main(argv=None) -> int:
                        if load_local_env().get("STRING_USAGE_LEDGER") else None)
     report = sub.add_parser("usage", help="Read durable usage and any hold")
     report.add_argument("--run")
+    reconcile = sub.add_parser("reconcile-portal", help="Offline, audited portal charge reconciliation; does not resume")
+    reconcile.add_argument("--run", required=True)
+    reconcile.add_argument("--evidence", type=Path, required=True)
+    reconcile.add_argument("--review-note", required=True)
+    resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
+    resume.add_argument("--run", required=True)
+    resume.add_argument("--review-note", required=True)
     local = sub.add_parser("process", help="Transcribe/OCR verified local capture; no source requests")
     local.add_argument("manifest", type=Path)
     local.add_argument("--model", choices=("base", "small", "medium"), default="small")
@@ -317,6 +324,10 @@ def main(argv=None) -> int:
                 result = ledger.report(args.run)
             elif args.command == "usage":
                 result = ledger.report(args.run)
+            elif args.command == "reconcile-portal":
+                result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
+            elif args.command == "resume-reviewed-timeout":
+                result = ledger.resume_reviewed_timeout(args.run, args.review_note)
             else:
                 result = capture(args.url, args.run, ledger, args.downloads, args.shared_ledger)
         print(json.dumps(result, indent=2))
