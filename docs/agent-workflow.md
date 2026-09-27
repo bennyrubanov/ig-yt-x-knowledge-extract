@@ -29,7 +29,7 @@ Cross-ref: [AGENTS.md](../AGENTS.md) (entry point), [README.md](../README.md) (s
 | **openai-whisper** | Fallback: `WHISPER_BACKEND=openai` (~2–3× RTF) |
 | **Cursor Read** | Vision on frame JPGs |
 
-No paid APIs. Scripts already warn if `ollama ps` shows a loaded model.
+The built-in local tools require no paid APIs. The separately evaluated provider-backed capture below may incur service charges and is not integrated. Scripts already warn if `ollama ps` shows a loaded model.
 
 ## Auth (read this before downloading Instagram)
 
@@ -47,6 +47,40 @@ See [the reel request fix and regression checks](reel-single-fetch.md).
 ---
 
 **Account warning:** if the user reports automated activity, run `python scripts/igx.py ig-safety hold --reason 'account warning'` even when requests succeed. Follow [warning handling](auth.md#automated-activity-warning-without-a-download-failure); reuse local/source material first. No configured delay guarantees account safety.
+
+## Credentialless capture evaluation — September 27, 2026
+
+After the account incident, the user explicitly requested a bounded mymind/String
+evaluation to avoid personal Instagram cookies. One public-reel request through
+String, followed by an anonymous media download, produced a complete 112-second
+720×1280 H.264 video with AAC stereo audio. Its duration matched the source
+manifest; a full local decode, selected frame and short speech transcription
+verified usable media. No personal Instagram cookies or account authorization
+were supplied. CAPTCHA solving was disabled; no signed-in browser or cookie
+fallback was used. The provider's internal request strategy/count is unknown.
+Private source, media and verification evidence are linked from `AGENTS.local.md`
+when available; do not publish them or temporary signed media URLs.
+
+Two existing mymind reel cards offered previews, captions and summaries but
+explicitly sent playback to the original Instagram link. A supported export
+attempt returned to sign-in without a download, and no authenticated API test
+was made. This does not prove that every mymind object lacks media, but those
+cards are insufficient evidence of a full-video/audio archive.
+
+The result establishes feasibility for one public reel, not reliability across
+the queue, soundtrack availability on carousels, a safe request allowance or
+zero account risk. Retain the existing queue, local analysis, audio retention
+and filing workflow; only acquisition needs replacement. A future public-media
+adapter must operate without access to personal browser/cookie stores, keep
+credentials out of redirects/logs, validate the actual file and audio, cache
+successes, and stop on access denial/challenge/rate limit. Do not add personal
+cookies, signed-in browser access, CAPTCHA solving or identity rotation as
+fallbacks. Use supplied/local material when public capture is unavailable.
+
+**Evaluation only:** no production adapter or queue drain was implemented by
+this test, and the authenticated extractor's persistent hold remains active.
+Follow the [incident operating rules](instagram-account-incident.md) before any
+new capture work; this result alone does not authorize batch collection.
 
 ## Step 1 — Ollama check
 
