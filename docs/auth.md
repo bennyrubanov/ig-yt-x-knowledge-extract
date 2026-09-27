@@ -1,5 +1,7 @@
 # Auth — no Instagram (or X) OAuth
 
+> **Incident rules take precedence over every recipe on this page.** Read [the September 27 account incident](instagram-account-incident.md). The user reports unlocking after dismissing an explicit automated-behavior warning on the phone; extraction remains held. Do not refresh cookies, probe media or clear the hold merely because access returned. The recipes below describe mechanics, not authorization or a guarantee of account safety.
+
 There is **no** Instagram app grant, Graph API, “Connect Instagram,” or official download API in this repo. Same for X. The download scripts reuse a **browser session** you already have.
 
 Agents: if the jar is missing, **stop** and give the human this page. Do not invent OAuth. Do not log into Google or Instagram as the agent. Do not commit, log, echo, or paste cookie files.
@@ -15,7 +17,7 @@ Cloud / Codespace / a VM without the operator’s Chrome **cannot** download Ins
 
 Netscape (Mozilla) format. First line `# Netscape HTTP Cookie File` or `# HTTP Cookie File`. On Unix, `chmod 600`. Instagram needs the HttpOnly **`sessionid`** row. An export that skips HttpOnly will 403 / empty-media while the post is still live.
 
-`python3 scripts/check-setup.py` only checks that the **row exists**. It does **not** prove Instagram will serve media. A stale `sessionid` from a logged-out Chrome session is still a green check. Log into [instagram.com](https://www.instagram.com/) in the browser first, then re-export, then probe one reel (see below).
+`python3 scripts/check-setup.py` only checks that the **row exists**. It does **not** prove Instagram will serve media. A stale `sessionid` from a logged-out Chrome session is still a green check. Do not use this check to justify a login, export or probe after an account warning; apply the incident rules first.
 
 An expired **exported cookie file** does not prove the browser is logged out. First check the browser the operator actually uses: if the requested reel plays while logged in, another login is unnecessary. A Codex in-app browser session is separate from Chrome and is not automatically available to `yt-dlp --cookies-from-browser chrome:Default`; do not export Chrome merely because a different browser works. Use supported browser media export when available, or the documented attended export from the browser/profile that holds the session. A successful public download despite a stale-cookie warning is not evidence that the jar has been repaired. Network/DNS failures are also not evidence of expired authentication.
 
@@ -79,9 +81,9 @@ yt-dlp --cookies /tmp/ig-cookies-probe.txt --skip-download \
 rm -f /tmp/ig-cookies-probe.txt
 ```
 
-Use `chrome:"Profile 1"` (or another named profile) if Instagram is not in Default. Do not dump a second profile “just to check” — that is more Keychain prompts. If the probe still returns empty media, the browser is logged out or that post is gone. Do not dump again until the human confirms a reel plays while logged in.
+Use `chrome:"Profile 1"` (or another named profile) if Instagram is not in Default. Do not dump a second profile “just to check” — that is more Keychain prompts. If an independently authorized probe still returns empty media, stop. Stale authentication, unavailable content, account protection and extractor incompatibility can be indistinguishable at this point. Do not repeat exports; normal browser playback alone does not justify another probe.
 
-**One-off download** without writing a jar (human at Keychain):
+**One-off diagnostic reference only** (never a way around the safety hold; requires the same incident review as any other account access):
 
 ```bash
 yt-dlp --cookies-from-browser chrome:Default "<REEL_URL>"
@@ -95,7 +97,7 @@ Same Netscape recipe → `~/.config/x-cookies.txt`. Only needed when yt-dlp hits
 
 ## Login paused / “try again later”
 
-Instagram is pausing **this login**, not proving a permanent ban and not saying the password is wrong. The usual trigger is the same logged-in browser hitting media endpoints in a burst (this pipeline reuses the Chrome session via cookies; there is no OAuth grant).
+A login pause or Locked label establishes restricted access, not its exact cause or duration. This pipeline reuses the browser session through cookies, so automated collection exposes that account to detection. Record the actual message; do not diagnose a permanent ban, wrong password or mailbox compromise from a generic failure.
 
 **2026-08-23:** a Notion inbox batch of 19 Instagram URLs in about 20 minutes, then two same-run retries on posts that already came back empty. Seventeen items had already downloaded, so the session was valid at the start. After the run, `python3 scripts/check-setup.py` reported **no `sessionid` row** — yt-dlp had been pointed at the live jar and write-back deleted it. Instagram separately decided the session looked automated and paused Chrome login.
 
@@ -103,11 +105,11 @@ Copying the jar (now default) stops the **local** wipe. It does not stop Instagr
 
 While the timer is up:
 
-1. Wait. Do not keep submitting the login form; that extends it.
-2. Do not re-export cookies until a reel **plays in Chrome while logged in**. Then one HttpOnly export into `~/.config/ig-cookies.txt` ([recipe above](#write-the-instagram-jar-pick-one)).
-3. Do not run this pipeline against Instagram until the human says browser login works.
+1. Keep extraction held. If Instagram displays a timer, let the user follow it; do not promise a specific recovery time or keep submitting login attempts.
+2. Do not export cookies to fix a checkpoint. Recovery is performed by the user through Instagram; do not prescribe an email/password change simply to make the extractor work.
+3. Record when the user reports normal access returning, separately from the decision about automated collection. A working reel or Dismiss action is not authorization to resume.
 4. Empty-media **or HTTP 400** Instagram URLs: mark `fail` and stop. Do **not** retry them in the same burst. A spaced 8-ok then 400 (2026-08-26) is still a stop.
-5. Check `python scripts/igx.py ig-safety status`. The CLI stops while held. After the user confirms the warning is clear, an agent can deliberately resume with `python scripts/igx.py ig-safety resume --confirmed-clear`; this preserves the prior request history. The guard allows one Instagram downloader at a time across processes, enforces at least 180 seconds between invocations and at most 8 invocations per rolling 24 hours. A nonzero downloader exit pauses further Instagram access. `--ig-gap 0`, a new batch process, and more workers cannot bypass these limits. These are conservative brakes, **not safe thresholds**. Split large inboxes across sittings and resume from local artifacts; do not restart the prefix. Random User-Agents, proxies, or extra `yt-dlp` probes are not part of this pipeline.
+5. Check `python scripts/igx.py ig-safety status`. The CLI stops while held. The technical command `python scripts/igx.py ig-safety resume --confirmed-clear` preserves prior request history, but its flag is not an approval or safety check. Do not invoke it solely on a report that the warning is clear. The incident runbook and explicit user direction about a reviewed capture approach must govern any future change; the current incident remains held. The guard allows one Instagram downloader at a time across processes, enforces at least 180 seconds between invocations and at most 8 invocations per rolling 24 hours. A nonzero downloader exit pauses further Instagram access. `--ig-gap 0`, a new batch process, and more workers cannot bypass these limits. These are conservative brakes, **not safe thresholds**. Reuse local artifacts without requesting Instagram; do not treat splitting a queue across days as permission to restart collection. Random User-Agents, proxies, or extra `yt-dlp` probes are not part of this pipeline.
 
 `--workers 1`, no cookie paste, and not looping `--cookies-from-browser` were already correct. The volume plus failed retries is what looked bot-like.
 
@@ -120,9 +122,9 @@ While the timer is up:
 - Pass `~/.config/ig-cookies.txt` straight to `yt-dlp --cookies` (the CLI copies it; a manual probe must copy it too)
 - Retry empty-media Instagram URLs in the same run
 - Hammer the Instagram login form, or re-export, while Chrome shows a pause / checkpoint
-- Hit Instagram from this repo until the human confirms a reel plays logged-in
+- Treat a working reel, dismissed warning, unlocked account or old queue authorization as permission to resume after an account incident
 
-Re-export only after the browser session works again. Sessions expire; a checkpoint is not “export harder.”
+A restored browser session is insufficient grounds for cookie export or resumption after an incident. Sessions expire; a checkpoint is not “export harder.”
 
 ## Automated-activity warning without a download failure
 
@@ -132,8 +134,7 @@ only establish retrieval, not account safety or permission to continue. Detectio
 may become visible at a later login; its exact trigger cannot be inferred from a
 successful extraction log.
 
-Stop account-facing Instagram collection and review the capture approach before
-resuming a bulk run. Prefer cached media, user-supplied files/recordings or the
+Stop account-facing Instagram collection. Read the [incident runbook](instagram-account-incident.md) and keep the hold while a different capture approach is reviewed. Clearing a phone prompt is recovery evidence, not approval for another bulk run. Prefer cached media, user-supplied files/recordings or the
 original linked source. Keep transcription, analysis and filing concurrency local.
 Do not treat a fresh process, cookie refresh or another browser as resetting the
 warning. Browser-driven collection is still automated activity.
