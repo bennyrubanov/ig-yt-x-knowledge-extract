@@ -115,6 +115,43 @@ requests only; do not append a reconciliation as another request or infer a
 charge from its original billing class. Reconcile that mirror separately with
 an audited correction to the original request records.
 
+### One reviewed recovery when a paid response was lost locally
+
+Only after the original interrupted attempt is portal-reconciled and its
+timeout hold released, a reviewer may allow **one** extra call for that exact
+source if the portal shows HTTP 200 and a real charge but no response or media
+was retained locally. It is a fresh paid request, not a free replay. The
+original attempt and charge stay in history. The extra call consumes its own
+reservation and actual charge within the **same** run budget and burn limits.
+It is the sole exception to the original run's request-count limit; normal
+sources remain limited by the original `max_requests`.
+
+```bash
+python scripts/igx.py public-capture authorize-lost-response-recovery \
+  --run approved-queue-run --attempt-id ORIGINAL_ATTEMPT_ID \
+  --review-note 'Portal shows paid HTTP 200; worker stopped and local response was lost'
+python scripts/igx.py public-capture fetch \
+  'https://www.instagram.com/reel/EXACT_ORIGINAL_SHORTCODE/' \
+  --run approved-queue-run --recover-attempt ORIGINAL_ATTEMPT_ID
+```
+
+Authorization is offline and records an audit note. The fetch requires that
+exact prior attempt, run, host and shortcode. A second authorization or second
+recovery is rejected even if the recovery fails. All normal billing and media
+stops still apply. A cached verified manifest returns locally without using
+the allowance. This recovery path never changes the personal-account hold.
+
+The first use of the recovery-capable code migrates the old SQLite attempt
+table to a schema with a linked `recovery_of` field and partial uniqueness
+indexes. Stop all existing capture coordinators and preserve a backup before
+running that version on the production ledger. The migration runs under one
+SQLite write transaction, retains attempt IDs and checks foreign keys.
+
+When the portal later shows both the original and recovery charges for one
+URL, include `attempt_id` on **both** rows in the complete evidence snapshot.
+The timestamp must match each reservation. The reconciliation audit for the
+original charge stays unchanged; only new attempt charges are added.
+
 The currently exposed MCP result may omit String's outer billing header. The
 production adapter uses REST and captures `x-billed-request-type` from the
 provider response before any media processing. It does not infer that field

@@ -5,6 +5,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -163,6 +164,37 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result["error"], "provider_deadline_exceeded")
         self.assertIsNotNone(children[0].poll())
         self.assertNotEqual(children[0].returncode, 0)
+
+    def test_explicit_recovery_fetch_reserves_linked_attempt_once(self):
+        parent = self.ledger.reserve("run", "Lost123")
+        with self.ledger._db() as db:
+            reserved_at = db.execute("SELECT reserved_at FROM attempts WHERE attempt_id=?", (parent,)).fetchone()[0]
+        self.ledger.hold("provider_wall_time_exceeded")
+        evidence = {"evidence_source": "https://portal.usestring.ai/web-access",
+                    "run_id": "run", "total_actual_usd": "0.003",
+                    "rows": [{"source_id": "Lost123", "url": "https://www.instagram.com/reel/Lost123/",
+                              "time_local": datetime.fromtimestamp(reserved_at, timezone.utc).isoformat(),
+                              "status_code": 200, "result": "OK", "portal_type": "Fetch",
+                              "actual_usd": "0.003", "billing_class": None}]}
+        portal = self.root / "portal.json"
+        portal.write_text(json.dumps(evidence))
+        self.ledger.reconcile_portal("run", portal, "Reviewed paid lost response")
+        self.ledger.resume_reviewed_timeout("run", "Worker stopped and portal charge confirmed")
+        self.ledger.authorize_lost_response_recovery("run", parent,
+            "Reviewed one exact-source recovery allowance")
+        with patch("string_capture.api_key", return_value="fake"), patch(
+            "string_capture.bounded_fetch_page",
+            return_value={"status_code": 403, "error": "provider_http_error"}) as request:
+            with self.assertRaises(CaptureStopped):
+                capture("https://www.instagram.com/reel/Lost123/", "run", self.ledger,
+                        self.root, recovery_of=parent)
+        request.assert_called_once()
+        report = self.ledger.report("run")
+        self.assertEqual(report["attempt_count"], 2)
+        self.assertEqual(report["attempt_records"][1]["recovery_of"], parent)
+        with self.assertRaises(UsageBlocked):
+            self.ledger.reserve("run", "Lost123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/Lost123/")
 
 
 if __name__ == "__main__":
