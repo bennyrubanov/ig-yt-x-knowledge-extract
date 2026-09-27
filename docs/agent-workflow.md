@@ -29,7 +29,7 @@ Cross-ref: [AGENTS.md](../AGENTS.md) (entry point), [README.md](../README.md) (s
 | **openai-whisper** | Fallback: `WHISPER_BACKEND=openai` (~2–3× RTF) |
 | **Cursor Read** | Vision on frame JPGs |
 
-The built-in local tools require no paid APIs. The separately evaluated provider-backed capture below may incur service charges and is not integrated. Scripts already warn if `ollama ps` shows a loaded model.
+The built-in local tools require no paid APIs. The optional [String public-capture adapter](public-capture.md) has separately metered service charges. Scripts already warn if `ollama ps` shows a loaded model.
 
 ## Auth (read this before downloading Instagram)
 
@@ -77,8 +77,9 @@ successes, and stop on access denial/challenge/rate limit. Do not add personal
 cookies, signed-in browser access, CAPTCHA solving or identity rotation as
 fallbacks. Use supplied/local material when public capture is unavailable.
 
-**Evaluation only:** no production adapter or queue drain was implemented by
-this test, and the authenticated extractor's persistent hold remains active.
+**Subsequent implementation:** the separately authorized [public-capture CLI](public-capture.md)
+implements acquisition, validation and durable spending stops. The initial pilot
+above did not drain the queue, and the authenticated extractor's hold remains active.
 Follow the [incident operating rules](instagram-account-incident.md) before any
 new capture work; this result alone does not authorize batch collection.
 

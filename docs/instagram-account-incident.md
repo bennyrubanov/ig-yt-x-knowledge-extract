@@ -56,9 +56,10 @@ One public reel was retrieved through String plus an anonymous media GET, with
 full video duration and useful audio verified locally. Two inspected mymind
 cards sent playback to Instagram rather than providing stored video. Read the
 [evaluation findings and limits](agent-workflow.md#credentialless-capture-evaluation--september-27-2026).
-This is evidence that a credentialless acquisition path can work; it is not a
-production integration, blanket permission for collection or a reason to clear
-the authenticated extractor hold. Private evidence stays in the local handoff.
+This demonstrated feasibility. The subsequently authorized [public-capture
+adapter](public-capture.md) now supplies explicit budgets, usage accounting and
+stop behavior. Each run still needs user authorization and a spending limit;
+the authenticated extractor hold remains. Private evidence stays in the local handoff.
 
 ## Related guidance
 

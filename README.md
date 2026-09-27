@@ -1,5 +1,7 @@
 # ig-yt-x-knowledge-extract
 
+For authorized Instagram retrieval after the account incident, use the [metered String public-capture path](docs/public-capture.md). It does not use Instagram login cookies. Legacy authenticated extraction remains held; it is not a fallback.
+
 Download Instagram, YouTube, or X media, pull captions and frames, transcribe with Whisper, and file notes in Obsidian. Built for agent-assisted review (charts, on-screen text, spoken claims).
 
 No paid APIs. Cookies stay on your machine. Scripts warn if `ollama ps` shows a loaded model (Whisper also needs RAM).
