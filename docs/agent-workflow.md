@@ -296,6 +296,8 @@ makes techniques discoverable. Backfills should reuse existing notes, and import
 ideas must not be labeled as lessons already completed. See the
 [filing contract](obsidian-filing.md#music-production-handoff).
 
+**Summarize, then dissect.** After TL;DR: a **What they said** narrative (speech + overlays + caption, enough to skip the video), then **Dissection** (what holds / CTA / what to do). A claims table is dissection, not a substitute for the summary. If a receipt already landed as TL;DR-only, backfill those two sections from disk before calling the queue filed.
+
 **Routing:**
 
 | Goal | Path |
@@ -410,6 +412,7 @@ More URLs: paste in chat, or a bookmark-HTML export of *chosen folders* into `ex
 
 - **2026-09-17** — Before resuming a queued batch, reconcile usable local media with filed vault receipts. Cached media can finish a queue without new Instagram requests; generate missing selected frames locally. Preserve Notion `created_time` as `added_at` in receipts, separately from extraction date. Review the original Name when the prompt parser drops a short instruction or absorbs creator text. Mark `noted` only after validating the receipt, retained media, and hub links.
 
+- **2026-09-28** — Filing bar: **What they said** (reel narrative) then **Dissection**. TL;DR-only receipts are incomplete; backfill from disk. [obsidian-filing.md](obsidian-filing.md). A carousel captured without its soundtrack remains incomplete when the user's save intent is the song; retain the partial source note and a music-repo bookmark, but do not mark `noted` or invent audio. Before any Notion status mutation, start a durable change journal and read back the changed row; a journal failure stops the mutation.
 - **2026-08-28** — Retrying historical empty-media fails: a **0-byte `{id}.description.txt`** still counts as `usable()` on disk, so `igx batch` logs `skipped_exists` without downloading. Delete stale sidecars (and any empty `{id}/` tree) before retry. Two Aug-23 empty-media rows recovered; `DcYw0OSu8x_` still HTTP 400 (isolated retry, same error).
 - **2026-08-27** — Notion IG drain finished in two sittings (32, pause, then 29). Resume by **skipping jsonl `exit==0` URLs** — do not restart the list (that re-hits Instagram). Random **90–180 s** after each success + stop-on-nonzero; carousels were fast. Instagram served all 29. Empty-media / HTTP 400 still fail-once. [auth.md](auth.md).
 - **2026-08-26** — After the 23 Aug checkpoint: do not try to empty a large Notion IG pile in one sitting. Random **150–210 s** gaps still produced Instagram **HTTP 400** on the 9th reel of a long run (`DcYw0OSu8x_`). Stop. Do not retry. Do not re-export until a reel plays in Chrome. [auth.md](auth.md).

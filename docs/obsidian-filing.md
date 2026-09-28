@@ -110,11 +110,12 @@ They do not post Instagram comments from this workflow. Never tell them “don�
 **Body structure:**
 
 1. **TL;DR** — first bullet **Your prompt:** if `user_question` is set; then 2–4 more bullets (agents read first)
-2. **Claims** — what the creator asserts
-3. **Evidence** — what frames/transcript/caption support or contradict (describe charts; don't paste raw transcript)
-4. **Analysis** — legitimacy, gaps, context
-5. **Related** — `[[wikilinks]]`
-6. **Open questions** — checkbox follow-ups
+2. **What they said** — narrative of the reel/carousel (speech + overlays + caption). Enough that you could skip the video. Not a title restatement. Quote distinctive numbers and names.
+3. **Dissection** — what holds, what is CTA/hype, what to do. A claims table is fine when there are several assertions. Describe charts; do not paste the raw transcript.
+4. **Related** — `[[wikilinks]]`
+5. **Open questions** — checkbox follow-ups
+
+TL;DR-only receipts are incomplete. If a note already landed thin, **backfill** What they said + Dissection from the transcript/frames before marking the pile done.
 
 ### Naming
 
