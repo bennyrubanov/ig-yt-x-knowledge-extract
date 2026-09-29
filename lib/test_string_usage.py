@@ -10,7 +10,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from string_usage import Ledger, UsageBlocked
+from string_usage import Ledger, UsageBlocked, recommended_run_budget_usd
 
 
 class StringUsageTests(unittest.TestCase):
@@ -89,15 +89,55 @@ class StringUsageTests(unittest.TestCase):
                 self.ledger.create_run("other", bad)
         self.assertEqual(self.ledger.report("queue1")["attempt_count"], 0)
 
-    def test_budget_exhaustion_latches_hold_and_new_run_cannot_bypass(self):
+    def test_recommended_budget_uses_three_times_observed_cost_with_headroom(self):
+        self.assertEqual(recommended_run_budget_usd(2), "0.05")
+        self.assertEqual(recommended_run_budget_usd(3), "0.05")
+        self.assertEqual(recommended_run_budget_usd(8), "0.10")
+        self.assertEqual(recommended_run_budget_usd(26), "0.25")
+        self.assertEqual(recommended_run_budget_usd(30), "0.30")
+        with self.assertRaisesRegex(ValueError, "smaller bounded run"):
+            recommended_run_budget_usd(112)
+        with self.assertRaisesRegex(ValueError, "approved"):
+            recommended_run_budget_usd(1, "0.007")
+        with self.assertRaisesRegex(ValueError, "per-run maximum"):
+            self.ledger.create_run("too_many", "1", max_requests=112)
+
+    def test_budget_exhaustion_stops_only_that_run(self):
         self.run_with(budget="0.006", min_gap_seconds=0)
         attempt = self.ledger.reserve("queue1", "abc123", expected_billing_class="browser_premium")
-        self.ledger.complete(attempt, 200, billed_request_type="browser_premium")
+        self.ledger.complete(attempt, 200, billed_request_type="browser_premium",
+                             actual_usd="0.006")
         with self.assertRaisesRegex(UsageBlocked, "budget_limit"):
             self.ledger.reserve("queue1", "def456")
-        self.assertEqual(self.ledger.report()["global_hold"], "budget_limit")
-        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
-            self.ledger.create_run("queue2", "1")
+        self.assertIsNone(self.ledger.report()["global_hold"])
+        self.ledger.create_run("queue2", recommended_run_budget_usd(2),
+                               max_requests=2, min_gap_seconds=0)
+        second = self.ledger.reserve("queue2", "def456")
+        self.ledger.complete(second, 200, billed_request_type="request_premium",
+                             actual_usd="0.003")
+        with self.assertRaisesRegex(UsageBlocked, "budget_limit"):
+            self.ledger.reserve("queue1", "ghi789")
+
+    def test_new_run_requires_prior_actual_charge_reconciliation(self):
+        self.ledger.create_run("queue1", "0.05", max_requests=1, min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(attempt, 200, billed_request_type="request_premium")
+        with self.assertRaisesRegex(UsageBlocked, "unreconciled_actual_charge"):
+            self.ledger.create_run("queue2", "0.05", max_requests=1)
+        self.assertIsNone(self.ledger.report()["global_hold"])
+
+    def test_request_limit_stops_only_that_run_and_one_dollar_cap_is_enforced(self):
+        self.ledger.create_run("queue1", "0.05", max_requests=1, min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(attempt, 200, billed_request_type="request_premium",
+                             actual_usd="0.003")
+        with self.assertRaisesRegex(UsageBlocked, "request_limit"):
+            self.ledger.reserve("queue1", "def456")
+        self.assertIsNone(self.ledger.report()["global_hold"])
+        with self.assertRaisesRegex(ValueError, r"approved \$1"):
+            self.ledger.create_run("too_large", "1.01")
+        self.ledger.create_run("queue2", "0.05", max_requests=1, min_gap_seconds=0)
+        self.assertIsInstance(self.ledger.reserve("queue2", "def456"), int)
 
     def test_dedupe_failed_attempt_and_minimum_gap(self):
         self.run_with()

@@ -512,3 +512,14 @@ local environment, then activate that environment before invoking `igx`; otherwi
 history or daily budget, and is not a reason for another cookie export or a loop of
 failed URL probes. If the updated downloader fails too, retain its diagnostic and
 continue cached/caption/primary-source work with honest coverage limits.
+
+### 2026-09-29: measured per-run String budgets
+
+Four public-capture runs totaled 40 charged requests at $0.003 each; the first
+included one reviewed recovery. Plan each new bounded run from the expected
+number of paid Instagram fetches, using the formula and $1 run ceiling in
+[public-capture.md](public-capture.md). Historical total spend is still reported,
+but is not a shrinking authorization balance. A normal request-count or budget
+stop ends only that run. Before starting another, reconcile all actual charges;
+an unresolved provider, billing, media, or fast-spending hold still blocks all
+runs. This change does not permit personal-account Instagram extraction.

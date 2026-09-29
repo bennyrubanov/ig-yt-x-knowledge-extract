@@ -28,6 +28,29 @@ _TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _HOST = re.compile(r"^[a-z0-9.-]{1,120}$")
 _SOURCE_URL = re.compile(r"^https://www\.instagram\.com/(?:reel|p)/([A-Za-z0-9_-]{1,80})/$")
 _RESUMABLE_HOLDS = frozenset({"provider_wall_time_exceeded"})
+MAX_RUN_MICRODOLLARS = 1_000_000
+MAX_REQUEST_MICRODOLLARS = 6_000
+MAX_RUN_REQUESTS = 111
+
+
+def recommended_run_budget_usd(max_requests: int, max_request_usd: object = "0.006") -> str:
+    """Three times observed $0.003/request, rounded up to $0.05, with a $1 run ceiling.
+
+    Also leave at least 50% headroom above the configured per-request reserve.
+    This plans a fresh run; it never increases an existing run's immutable limits.
+    """
+    if isinstance(max_requests, bool) or not isinstance(max_requests, int) or max_requests < 1:
+        raise ValueError("max_requests must be a positive integer")
+    if max_requests > MAX_RUN_REQUESTS:
+        raise ValueError("planned request count exceeds approved per-run maximum; use a smaller bounded run")
+    per_request = _money(max_request_usd, positive=True)
+    if per_request > MAX_REQUEST_MICRODOLLARS:
+        raise ValueError("per-request ceiling exceeds approved $0.006")
+    per_item = max(9_000, (per_request * 3 + 1) // 2)
+    budget_micro = max(50_000, ((max_requests * per_item + 49_999) // 50_000) * 50_000)
+    if budget_micro > MAX_RUN_MICRODOLLARS:
+        raise ValueError("recommended budget exceeds approved $1 per run; use a smaller bounded run")
+    return f"{Decimal(budget_micro) / Decimal(1_000_000):.2f}"
 
 
 class UsageBlocked(RuntimeError):
@@ -225,11 +248,17 @@ class Ledger:
         run_id = _token(run_id, "run_id")
         if isinstance(max_requests, bool) or not isinstance(max_requests, int) or max_requests < 1:
             raise ValueError("max_requests must be a positive integer")
+        if max_requests > MAX_RUN_REQUESTS:
+            raise ValueError("planned request count exceeds approved per-run maximum")
         values = (_money(budget_usd, positive=True), max_requests,
                   _money(max_request_usd, positive=True),
                   _seconds(min_gap_seconds, "min_gap_seconds"),
                   _money(burn_limit_usd, positive=True),
                   _seconds(burn_window_seconds, "burn_window_seconds"))
+        if values[0] > MAX_RUN_MICRODOLLARS:
+            raise ValueError("run budget exceeds approved $1")
+        if values[2] > MAX_REQUEST_MICRODOLLARS:
+            raise ValueError("per-request ceiling exceeds approved $0.006")
         if values[2] > values[0]:
             raise ValueError("per-request ceiling exceeds run budget")
         with self._write() as db:
@@ -247,6 +276,8 @@ class Ledger:
                 pending = db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone()
                 if pending:
                     raise UsageBlocked("pending_attempt_requires_reconciliation")
+                if db.execute("SELECT 1 FROM attempts WHERE actual_micro IS NULL LIMIT 1").fetchone():
+                    raise UsageBlocked("unreconciled_actual_charge")
                 db.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)",
                            (run_id, self._clock(), *values))
                 self._event(db, "run_created", run_id)
@@ -305,11 +336,9 @@ class Ledger:
             rows = db.execute("SELECT * FROM attempts WHERE run_id=?", (run_id,)).fetchall()
             original_count = sum(row["recovery_of"] is None for row in rows)
             if recovery_of is None and original_count >= run["max_requests"]:
-                self._hold(db, "request_limit", run_id)
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
             if consumed + run["max_request_micro"] > run["budget_micro"]:
-                self._hold(db, "budget_limit", run_id)
                 raise UsageBlocked("budget_limit")
             recent = db.execute("SELECT * FROM attempts WHERE reserved_at>?",
                                 (now - run["burn_window_seconds"],)).fetchall()

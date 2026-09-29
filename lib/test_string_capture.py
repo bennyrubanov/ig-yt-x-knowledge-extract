@@ -5,12 +5,13 @@ import tempfile
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from string_capture import CaptureStopped, capture, fetch_page, bounded_fetch_page, process_local
+from string_capture import CaptureStopped, capture, fetch_page, bounded_fetch_page, process_local, main
 from string_usage import Ledger, UsageBlocked
 
 
@@ -28,6 +29,16 @@ class CaptureTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_init_calculates_fresh_run_budget_without_network(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(["--ledger", str(self.root / "fresh.sqlite"), "init", "--run", "fresh",
+                         "--max-requests", "8", "--acknowledge-incident"])
+        self.assertEqual(code, 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["runs"][0]["budget_micro"], 100_000)
+        self.assertEqual(report["runs"][0]["max_requests"], 8)
 
     def test_request_contains_no_instagram_credentials_or_expensive_modes(self):
         response = Response(json.dumps({"statusCode": 200, "data": "html"}).encode())
