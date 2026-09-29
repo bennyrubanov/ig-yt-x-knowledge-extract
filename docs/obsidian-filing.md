@@ -86,6 +86,9 @@ Agents may create folders and move notes when it helps, but **prefer leaving sou
 ```yaml
 ---
 source: https://instagram.com/reel/...
+saved_url: https://instagram.com/reel/...?stkn=... # exact Notion URL when different from canonical source
+notion_page_id: "..."                             # for Notion captures
+added_at: "YYYY-MM-DDTHH:MM:SSZ"                    # original Notion created_time
 date: YYYY-MM-DD
 type: reel | carousel | article | synthesis
 tags: [instagram, wealth, options, gex]
@@ -96,6 +99,8 @@ capture_context: Inbox                             # Todoist / Notion / chat
 ```
 
 **Inbox pastes:** whatever they typed **immediately before** Instagram’s auto-title (`{creator} on Instagram: "…"`) is the **prompt** — a question, a statement, or a filing instruction (`Important distinguish the shorts from the longs`). Put the exact prefix in `user_question`. Do the work it asks (answer, split shorts vs longs, file tickers on the wealth trackers). YAML alone is not enough. A **Question** column is an optional override (`capture_context: Notion`). See [paste-inbox.md](paste-inbox.md).
+
+For a Notion queue row, keep the exact saved URL in `saved_url` when `source` is normalized (for example, a YouTube Short or X post without its share query), plus its page ID and original `created_time` as `added_at`. These identify the saved item during readback and prevent a later agent from mistaking the extraction date for the save date. Do this for YouTube, X and articles as well as Instagram.
 
 If `user_question` is set, the **first** TL;DR bullet is:
 
