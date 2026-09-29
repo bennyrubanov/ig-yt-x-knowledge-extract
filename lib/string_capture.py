@@ -19,7 +19,7 @@ from pathlib import Path
 
 from local_config import downloads_dir, load_local_env
 from string_media import MediaError, canonical_source, download_asset, extract_media, validate_media
-from string_usage import Ledger, UsageBlocked
+from string_usage import Ledger, UsageBlocked, recommended_run_budget_usd
 
 API_URL = "https://request.usestring.ai/v1/fetch"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -288,7 +288,7 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init", help="Record an explicitly approved capture budget; no network")
     init.add_argument("--run", required=True)
-    init.add_argument("--budget-usd", required=True)
+    init.add_argument("--budget-usd", help="Override the approved per-run estimate (maximum $1)")
     init.add_argument("--max-requests", type=int, default=30)
     init.add_argument("--max-request-usd", default="0.006")
     init.add_argument("--min-gap-seconds", type=float, default=10)
@@ -329,7 +329,9 @@ def main(argv=None) -> int:
         else:
             ledger = Ledger(args.ledger)
             if args.command == "init":
-                ledger.create_run(args.run, args.budget_usd, max_requests=args.max_requests,
+                budget = args.budget_usd or recommended_run_budget_usd(
+                    args.max_requests, args.max_request_usd)
+                ledger.create_run(args.run, budget, max_requests=args.max_requests,
                                   max_request_usd=args.max_request_usd, min_gap_seconds=args.min_gap_seconds)
                 result = ledger.report(args.run)
             elif args.command == "usage":

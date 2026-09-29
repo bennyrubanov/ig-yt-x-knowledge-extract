@@ -3,7 +3,8 @@
 This is the supported replacement acquisition path after the
 [personal-account incident](instagram-account-incident.md). It never reads
 Instagram cookies, uses the signed-in browser, or clears the authenticated
-extractor hold. The user must authorize this capture approach and its budget.
+extractor hold. The user authorized this capture approach and the per-run
+budget policy below.
 The original `reel`, `carousel` and `batch` paths remain held; they are not
 fallbacks when public retrieval fails. Only the acquisition step changes:
 Notion source/date/prompt, local analysis, Obsidian filing, project references
@@ -18,9 +19,9 @@ receives the String key. Instagram receives no user account credentials.
 The credential must already exist; these commands create no account or key.
 
 ```bash
-# Example only: choose a budget the user has actually approved.
+# Fresh bounded run; the budget is calculated from --max-requests.
 python scripts/igx.py public-capture init \
-  --run approved-queue-run --budget-usd 1 --max-requests 30 \
+  --run approved-queue-run --max-requests 30 \
   --acknowledge-incident
 
 python scripts/igx.py public-capture fetch \
@@ -28,6 +29,26 @@ python scripts/igx.py public-capture fetch \
 
 python scripts/igx.py public-capture usage --run approved-queue-run
 ```
+
+**Budget resets for each new, bounded run.** The four measured runs through
+September 29 cost $0.081/27 requests (26 original sources plus one reviewed
+recovery), $0.009/3, $0.024/8 and $0.006/2: $0.003 for every charged request.
+The default budget is `max($0.05, round up to $0.05 of $0.009 × planned
+requests)`: three times the observed unit cost, and above the $0.006
+per-request reservation ceiling. For 2, 3, 8, 26 and 30 planned requests this
+gives $0.05, $0.05, $0.10, $0.25 and $0.30, respectively. The hard ceiling is
+**$1 per run**, including an explicit `--budget-usd` override. Larger planned
+batches must be split into bounded runs of at most 111 requests. This is
+headroom, not a prediction or a prepaid charge; request count and the
+$0.006 per-request ceiling remain separate limits. Review the provider's
+current pricing and actual portal charges before changing these assumptions.
+
+The ledger keeps lifetime actual spend visible, but it is not a cumulative
+authorization limit. Use a fresh run ID for new work; old run limits remain
+immutable. A new run requires all earlier attempts to be settled **and their
+actual charges reconciled**. It cannot clear an unresolved provider, billing,
+media, or fast-spending hold. Do not create a fresh run to retry an already
+attempted source or work around a safety hold.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -46,8 +67,9 @@ evade a hold. Production runs must use the same ledger.
   retains its reservation and prevents another request until explicitly
   investigated; there is no automatic reset/retry command.
 - Default spacing is at least 10 seconds, with a $0.03 allowance per rolling
-  60 seconds. A pacing refusal makes no request. A spending-cap/burn-rate
-  violation latches a hold. These are spend controls, not assurances that any
+  60 seconds. A pacing refusal makes no request. The run budget and request
+  count stop that run; fast spending still latches a global hold. These are
+  spend controls, not assurances that any
   platform permits a particular retrieval rate.
 - Stop on missing/unknown billing class, non-success/error response, any charge
   above reservation, or a price increase exceeding four times the first verified
