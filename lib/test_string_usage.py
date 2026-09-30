@@ -239,6 +239,51 @@ class StringUsageTests(unittest.TestCase):
         path.write_text(json.dumps(evidence))
         return path
 
+    def soundtrack_parent(self):
+        self.run_with(min_gap_seconds=0)
+        parent = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(parent, 200, "request_premium", usable_media=True)
+        path = self.portal_evidence(["abc123"], total="0.003")
+        data = json.loads(path.read_text())
+        data["rows"][0]["url"] = "https://www.instagram.com/p/abc123/"
+        path.write_text(json.dumps(data))
+        self.ledger.reconcile_portal("queue1", path, "Reviewed successful photo capture")
+        self.ledger.create_run("music", "0.006", max_requests=1, min_gap_seconds=0)
+        return parent
+
+    def test_soundtrack_recheck_is_exact_once_and_preserves_charges(self):
+        parent = self.soundtrack_parent()
+        url = "https://www.instagram.com/p/abc123/"
+        self.ledger.authorize_soundtrack_recheck("music", parent, url, "a" * 64,
+                                                "User asks to resolve this soundtrack or try again")
+        with self.assertRaisesRegex(UsageBlocked, "exact_source"):
+            self.ledger.reserve("music", "other")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("music", "abc123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/reel/abc123/")
+        attempt = self.ledger.reserve("music", "abc123", recovery_of=parent, recovery_source_url=url)
+        self.ledger.complete(attempt, 200, "request_premium", actual_usd="0.003")
+        report = self.ledger.report()
+        self.assertEqual(report["known_actual_micro"], 6000)
+        self.assertEqual(report["attempt_records"][1]["recovery_of"], parent)
+        with self.assertRaisesRegex(UsageBlocked, "already_used"):
+            self.ledger.reserve("music", "abc123", recovery_of=parent, recovery_source_url=url)
+        self.ledger.create_run("again", ".05", max_requests=1)
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized_or_used"):
+            self.ledger.authorize_soundtrack_recheck("again", parent, url, "a" * 64,
+                                                    "A second repeat must be rejected")
+
+    def test_soundtrack_recheck_cannot_release_hold_or_increase_budget(self):
+        parent = self.soundtrack_parent()
+        self.ledger.authorize_soundtrack_recheck("music", parent, "https://www.instagram.com/p/abc123/",
+                                                "a" * 64, "Explicit user request to retry soundtrack")
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.ledger.create_run("music", "1", max_requests=1)
+        self.ledger.hold("provider_denial")
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.reserve("music", "abc123", recovery_of=parent,
+                                recovery_source_url="https://www.instagram.com/p/abc123/")
+
     def test_portal_reconciliation_preserves_original_class_and_pending_history(self):
         self.run_with(min_gap_seconds=0)
         first = self.ledger.reserve("queue1", "abc123")

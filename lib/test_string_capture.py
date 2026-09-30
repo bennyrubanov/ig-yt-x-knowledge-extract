@@ -1,5 +1,6 @@
 """Offline integration checks: budgets precede network, billing precedes media."""
 import io
+import hashlib
 import json
 import tempfile
 import subprocess
@@ -11,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from string_capture import CaptureStopped, capture, fetch_page, bounded_fetch_page, process_local, main
+from string_capture import CaptureStopped, capture, fetch_page, bounded_fetch_page, process_local, main, soundtrack_recheck
 from string_usage import Ledger, UsageBlocked
 
 
@@ -29,6 +30,68 @@ class CaptureTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def soundtrack_fixture(self):
+        source = "https://www.instagram.com/p/Test123/"
+        image = self.root / "slide.jpg"
+        image.write_bytes(b"original photo")
+        parent = self.ledger.reserve("run", "Test123")
+        self.ledger.complete(parent, 200, "request_premium", actual_usd=".003", usable_media=True)
+        evidence = self.root / "portal.json"
+        evidence.write_text(json.dumps({"evidence_source": "https://portal.usestring.ai/web-access",
+            "run_id": "run", "total_actual_usd": ".003", "rows": [{"source_id": "Test123",
+            "url": source, "time_local": datetime.now(timezone.utc).isoformat(), "status_code": 200,
+            "result": "OK", "portal_type": "Fetch", "actual_usd": ".003", "billing_class": None}]}))
+        self.ledger.reconcile_portal("run", evidence, "Reviewed successful original photo capture")
+        manifest = self.root / "Test123.public.json"
+        manifest.write_text(json.dumps({"source_id": "Test123", "source_url": source,
+            "capture_complete": True, "attempt_id": parent,
+            "files": [{"kind": "image", "path": str(image),
+                       "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}]}))
+        self.ledger.create_run("music", ".006", max_requests=1, min_gap_seconds=0)
+        self.ledger.authorize_soundtrack_recheck("music", parent, source,
+            hashlib.sha256(manifest.read_bytes()).hexdigest(), "Explicit user request to retry soundtrack")
+        return manifest
+
+    def test_soundtrack_recheck_fetches_only_audio_and_keeps_original_photos(self):
+        manifest = self.soundtrack_fixture()
+        before = manifest.read_bytes()
+        response = {"status_code": 200, "billed_request_type": "request_premium", "data": {
+            "code": "Test123", "display_url": "https://a.fbcdn.net/photo.jpg",
+            "music_metadata": {"music_info": {"music_asset_info": {
+                "title": "Song", "progressive_download_url": "https://a.fbcdn.net/audio.mp4"}}}}}
+        def download(url, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"audio fixture")
+        with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value=response), patch("string_capture.download_asset", side_effect=download) as dl, patch("string_capture.validate_media", return_value={"has_audio": True}):
+            result = soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+        self.assertTrue(result["audio_available"])
+        self.assertEqual(dl.call_count, 1)
+        self.assertEqual(result["files"][0]["role"], "music_reference")
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertEqual((self.root / "slide.jpg").read_bytes(), b"original photo")
+
+    def test_soundtrack_absence_is_recorded_without_retries_or_false_completion(self):
+        manifest = self.soundtrack_fixture()
+        response = {"status_code": 200, "billed_request_type": "request_premium",
+                    "data": {"code": "Test123", "display_url": "https://a.fbcdn.net/photo.jpg"}}
+        with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value=response) as fetch, patch("string_capture.download_asset") as dl:
+            result = soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+            self.assertFalse(result["audio_available"])
+            self.assertEqual(result["files"], [])
+            self.assertEqual(result["usage"]["filed_count"], 0)
+            dl.assert_not_called()
+            with self.assertRaises(UsageBlocked):
+                soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+            self.assertEqual(fetch.call_count, 1)
+
+    def test_soundtrack_manifest_changes_stop_before_network(self):
+        manifest = self.soundtrack_fixture()
+        manifest.write_text(manifest.read_text() + "\n")
+        with patch("string_capture.bounded_fetch_page") as fetch:
+            with self.assertRaisesRegex(CaptureStopped, "not_authorized_for_manifest"):
+                soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+            fetch.assert_not_called()
 
     def test_init_calculates_fresh_run_budget_without_network(self):
         output = io.StringIO()
