@@ -171,22 +171,30 @@ def _media(node: dict) -> list[dict]:
 
 
 def _audio_metadata(node: dict) -> dict | None:
-    clips = node.get("clips_metadata")
-    if not isinstance(clips, dict):
-        return None
-    for field in ("music_info", "original_sound_info"):
-        raw = clips.get(field)
-        if not isinstance(raw, dict):
+    # Photo posts use music_metadata; clips_metadata alone misses their music.
+    # Inspect only the exact matched post, never related posts or cover artwork.
+    for container in ("music_metadata", "clips_metadata"):
+        metadata = node.get(container)
+        if not isinstance(metadata, dict):
             continue
-        music = raw.get("music_asset_info") if isinstance(raw.get("music_asset_info"), dict) else raw
-        result = {k: music[k] for k in ("title", "artist_name", "audio_asset_id")
-                  if isinstance(music.get(k), (str, int)) and music.get(k)}
-        url = _string(music.get("progressive_download_url")) or _string(music.get("audio_url"))
-        if url:
-            result["url"] = url
-        if result:
-            result["provenance"] = f"clips_metadata.{field}"
-            return result
+        for field in ("music_info", "original_sound_info"):
+            raw = metadata.get(field)
+            if not isinstance(raw, dict):
+                continue
+            music = raw.get("music_asset_info") if isinstance(raw.get("music_asset_info"), dict) else raw
+            result = {k: music[k] for k in ("title", "artist_name", "audio_asset_id",
+                                          "audio_cluster_id", "duration_in_ms")
+                      if not isinstance(music.get(k), bool) and isinstance(music.get(k), (str, int)) and music.get(k)}
+            if "artist_name" not in result and _string(music.get("display_artist")):
+                result["artist_name"] = music["display_artist"]
+            url = (_string(music.get("progressive_download_url"))
+                   or _string(music.get("fast_start_progressive_download_url"))
+                   or _string(music.get("audio_url")))
+            if url:
+                result["url"] = url
+            if result:
+                result["provenance"] = f"{container}.{field}"
+                return result
     return None
 
 
@@ -301,7 +309,10 @@ def download_asset(url: str, dest: str | Path, max_bytes: int = MAX_ASSET_BYTES)
             if response.status != 200 or response.geturl() != url:
                 raise MediaError("Media response refused")
             content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-            if not content_type.startswith(expected_type):
+            # Instagram may serve an audio-only MP4 container as video/mp4.
+            # The subsequent local probe still requires an actual audio stream.
+            if not (content_type.startswith(expected_type)
+                    or expected_type == "audio/" and content_type == "video/mp4"):
                 raise MediaError("Unexpected media content type")
             length_header = response.headers.get("Content-Length")
             length = int(length_header) if length_header is not None else None

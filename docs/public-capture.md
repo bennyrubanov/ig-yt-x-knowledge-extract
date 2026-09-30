@@ -47,8 +47,9 @@ The ledger keeps lifetime actual spend visible, but it is not a cumulative
 authorization limit. Use a fresh run ID for new work; old run limits remain
 immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
-media, or fast-spending hold. Do not create a fresh run to retry an already
-attempted source or work around a safety hold.
+media, or fast-spending hold. Do not create a fresh run to silently retry an already
+attempted source or work around a safety hold. The user-directed carousel music
+recheck below is a narrow, separately audited exception.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -180,6 +181,45 @@ provider response before any media processing. It does not infer that field
 from destination HTML. Request IDs are sanitized; bodies, cookies, keys and
 temporary signed media URLs are excluded from usage records.
 
+### One user-directed carousel soundtrack recheck
+
+If the user explicitly asks to retry a missing carousel song, first check local
+evidence and the parser. Photo posts may use `music_metadata.music_info`, whereas
+reels use `clips_metadata`. Supporting both fields does not prove that public
+HTML exposes either field for a particular post. Music credits and download URLs
+must belong to the exact source; never borrow them from recommendations.
+
+After a successful, portal-reconciled image-only capture, an explicit user request
+can authorize **one** separate public music lookup. Create a dedicated run with
+`max_requests=1`; its usual per-request reserve, budget, pacing, billing and holds
+remain enforced. This cannot retry a denial, interrupted request, or failed media
+capture, and cannot release a hold. The original attempt and charge remain.
+
+```bash
+python scripts/igx.py public-capture init --run approved-music-check \
+  --max-requests 1 --acknowledge-incident
+python scripts/igx.py public-capture authorize-soundtrack-recheck \
+  --run approved-music-check --manifest downloads/SHORTCODE.public.json \
+  --user-direction 'Exact user request to resolve or retry this missing song'
+python scripts/igx.py public-capture soundtrack-recheck \
+  --run approved-music-check --manifest downloads/SHORTCODE.public.json \
+  --output-dir exports/private-music-check
+```
+
+Authorization records the source, verified manifest hash and user direction in
+`soundtrack_rechecks`. The new attempt links its original through `recovery_of`,
+with a distinct recheck audit event. It consumes the dedicated run's one request;
+the lost-response recovery allowance is not used. No second recheck is permitted,
+even under another run name. Existing photos and their manifest stay unchanged.
+
+The lookup retains private public-source evidence for offline diagnosis and
+downloads only an exposed soundtrack asset. A missing public asset is a documented
+incomplete music request, not completed filing or a reason to try other accounts.
+Reconcile its charge in the portal before another run. An MP4 container served as
+`video/mp4` may hold audio alone; local probing, audible activity and full decoding
+still must pass. A separate track/preview is a `music_reference`, not proof of the
+exact synchronized excerpt, rights to sample, or a complete song.
+
 ## Validate and process locally
 
 One public page fetch must return an exact shortcode match. Related/recommended
@@ -203,7 +243,7 @@ python scripts/igx.py public-capture process downloads/SHORTCODE.public.json --s
 Processing is local and can proceed while network collection is held. Agent
 analysis can run concurrently; keep paid retrieval with one coordinator.
 Subagents must not independently invoke String, Instagram or other paid
-providers during the queue run. Hand each filer a bounded manifest and sources.
+  providers during the queue run. Hand each filer a bounded manifest and sources.
 
 Image-only carousel capture does not establish soundtrack retrieval. An exposed
 separate music asset is labeled `music_reference`: it may be a track/preview,

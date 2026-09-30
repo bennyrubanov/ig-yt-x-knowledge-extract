@@ -96,6 +96,20 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(image["media"][1], {"kind": "audio", "role": "music_reference",
                                                "url": VIDEO})
 
+    def test_carousel_music_field_and_display_artist(self):
+        source = {"code": CODE, "carousel_media": [{"display_url": IMAGE}],
+                  "music_metadata": {"music_info": {"music_asset_info": {
+                      "title": "Carousel song", "display_artist": "Artist",
+                      "audio_asset_id": "123", "progressive_download_url": VIDEO}}}}
+        parsed = media.extract_media(embedded(source), CODE)
+        self.assertEqual(parsed["audio"]["artist_name"], "Artist")
+        self.assertEqual(parsed["audio"]["provenance"], "music_metadata.music_info")
+        self.assertEqual(parsed["media"][-1]["role"], "music_reference")
+        source["music_metadata"] = None
+        source["recommendations"] = [{"code": "Other", "music_metadata": {
+            "music_info": {"music_asset_info": {"title": "Unrelated", "audio_url": VIDEO}}}}]
+        self.assertNotIn("audio", media.extract_media(source, CODE))
+
 
 class FakeResponse:
     def __init__(self, body=b"video", content_type="video/mp4", length=None, final_url=VIDEO, status=200):
@@ -145,6 +159,18 @@ class DownloadTests(unittest.TestCase):
             self.assertEqual(fake_opener.open.call_args.kwargs["timeout"], 30)
             self.assertIsInstance(build.call_args.args[0], media.ProxyHandler)
             self.assertEqual(build.call_args.args[0].proxies, {})
+
+    def test_audio_mp4_container_type_is_allowed_but_html_is_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "reference.m4a"
+            opener = Mock()
+            opener.open.return_value = FakeResponse(content_type="video/mp4")
+            with patch.object(media, "build_opener", return_value=opener):
+                media.download_asset(VIDEO, dest)
+            opener.open.return_value = FakeResponse(content_type="text/html")
+            with patch.object(media, "build_opener", return_value=opener):
+                with self.assertRaises(media.MediaError):
+                    media.download_asset(VIDEO, dest)
 
     def test_truncated_oversized_type_redirect_and_errors_are_sanitized(self):
         variants = [FakeResponse(body=b"short", length=99),

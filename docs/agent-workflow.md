@@ -31,6 +31,16 @@ Cross-ref: [AGENTS.md](../AGENTS.md) (entry point), [README.md](../README.md) (s
 
 The built-in local tools require no paid APIs. The optional [String public-capture adapter](public-capture.md) has separately metered service charges. Scripts already warn if `ollama ps` shows a loaded model.
 
+**Carousel music lesson (2026-09-30):** photo posts may place their attached song
+under `music_metadata.music_info`, not the reel-only `clips_metadata` field. Check
+both on the exact post. The corrected parser still found no song credit or audio
+asset in the public Balochistan photo response after one explicit user-directed
+recheck. Photos alone cannot fulfil a music save. Preserve private response
+evidence for offline diagnosis, keep the item incomplete, and use an actual
+user-supplied soundtrack recording/download when public metadata is absent.
+The audited [one-request recheck](public-capture.md#one-user-directed-carousel-soundtrack-recheck)
+does not clear the authenticated account hold or permit repeated requests.
+
 ## Auth (read this before downloading Instagram)
 
 **September 27 incident: the user reports unlocked after dismissing an explicit automated-behavior warning; extraction remains held.** Read [the incident runbook](instagram-account-incident.md). It overrides older export/probe/resume instructions and historical pacing examples. Do not treat restored playback or a request to finish the queue as permission to clear this hold.

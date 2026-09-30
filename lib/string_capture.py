@@ -177,6 +177,73 @@ def cached_manifest(directory: Path, shortcode: str) -> dict | None:
         return None
 
 
+def image_only_manifest(path: Path) -> tuple[dict, str]:
+    value = json.loads(path.read_text())
+    canonical, mid = canonical_source(value["source_url"])
+    verified = cached_manifest(path.parent, mid)
+    if (verified is None or path.name != f"{mid}.public.json" or "/p/" not in canonical
+            or any(f.get("kind") != "image" for f in verified["files"])):
+        raise CaptureStopped("soundtrack_recheck_requires_verified_image_only_capture")
+    return verified, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def soundtrack_recheck(manifest_path: Path, run: str, ledger: Ledger,
+                       output_dir: Path, shared_ledger: Path | None = None) -> dict:
+    """One explicitly authorized public music lookup; retain photos unchanged."""
+    prior, digest = image_only_manifest(manifest_path)
+    canonical, mid = canonical_source(prior["source_url"])
+    parent = prior["attempt_id"]
+    allowances = ledger.report(run)["soundtrack_rechecks"]
+    if not any(a["parent_attempt_id"] == parent and a["manifest_sha256"] == digest
+               and a["source_url"] == canonical for a in allowances):
+        raise CaptureStopped("soundtrack_recheck_not_authorized_for_manifest")
+    key = api_key()
+    attempt = ledger.reserve(run, mid, recovery_of=parent, recovery_source_url=canonical)
+    try:
+        receipt = bounded_fetch_page(canonical, key)
+    except Exception:
+        ledger.hold("provider_unexpected_failure")
+        raise CaptureStopped("provider_unexpected_failure") from None
+    report = ledger.complete(attempt, receipt["status_code"], receipt.get("billed_request_type"),
+                             request_id=receipt.get("request_id"), error=receipt.get("error"))
+    try:
+        shared_record(shared_ledger, canonical, run, receipt)
+    except OSError:
+        ledger.hold("shared_usage_log_failed")
+        raise CaptureStopped("shared_usage_log_failed") from None
+    if report.get("hold_reason") or receipt.get("error") or receipt.get("status_code") != 200:
+        raise CaptureStopped(report.get("hold_reason") or receipt.get("error") or "capture_held")
+    try:
+        # Private source evidence permits offline parser repair without another
+        # paid request. It is excluded from both usage logs and Git.
+        write_json(output_dir / f"{mid}.source.json", {"data": receipt["data"]})
+        media = extract_media(receipt["data"], mid)
+        audio = media.get("audio") or {}
+        result = {"source_id": mid, "source_url": canonical, "run_id": run,
+                  "attempt_id": attempt, "recovery_of": parent,
+                  "purpose": "user_directed_carousel_soundtrack_recheck",
+                  "checked_at": datetime.now(timezone.utc).isoformat(),
+                  "personal_instagram_credentials_used": False,
+                  "source_response": str((output_dir / f"{mid}.source.json").resolve()),
+                  "audio_metadata": {k: v for k, v in audio.items() if k != "url"},
+                  "audio_available": bool(audio.get("url")), "files": []}
+        if audio.get("url"):
+            dest = output_dir / f"{mid}.music-reference.m4a"
+            download_asset(audio["url"], dest)
+            probe = validate_media(dest, require_audio=True, full_decode=True)
+            result["files"].append({"path": str(dest.resolve()), "kind": "audio",
+                                    "role": "music_reference", "probe": probe,
+                                    "sha256": hashlib.sha256(dest.read_bytes()).hexdigest()})
+            ledger.mark_media(attempt, usable=True)
+        else:
+            result["remaining"] = "No public soundtrack asset exposed; user audio still missing"
+        write_json(output_dir / f"{mid}.soundtrack-check.json", result)
+    except Exception:
+        ledger.hold("media_capture_or_validation_failed")
+        raise CaptureStopped("media_capture_or_validation_failed") from None
+    return dict(result, usage=ledger.report(run))
+
+
 def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: Path | None = None,
             recovery_of: int | None = None) -> dict:
     canonical, mid = canonical_source(url)
@@ -316,6 +383,16 @@ def main(argv=None) -> int:
     recovery.add_argument("--run", required=True)
     recovery.add_argument("--attempt-id", type=int, required=True)
     recovery.add_argument("--review-note", required=True)
+    authorize_music = sub.add_parser("authorize-soundtrack-recheck",
+                                    help="Offline one-time allowance after an explicit user request")
+    authorize_music.add_argument("--run", required=True)
+    authorize_music.add_argument("--manifest", type=Path, required=True)
+    authorize_music.add_argument("--user-direction", required=True)
+    music = sub.add_parser("soundtrack-recheck", help="One authorized public music lookup; no photo re-downloads")
+    music.add_argument("--run", required=True)
+    music.add_argument("--manifest", type=Path, required=True)
+    music.add_argument("--output-dir", type=Path, required=True)
+    music.add_argument("--shared-ledger", type=Path, default=fetch.get_default("shared_ledger"))
     local = sub.add_parser("process", help="Transcribe/OCR verified local capture; no source requests")
     local.add_argument("manifest", type=Path)
     local.add_argument("--model", choices=("base", "small", "medium"), default="small")
@@ -343,6 +420,13 @@ def main(argv=None) -> int:
             elif args.command == "authorize-lost-response-recovery":
                 result = ledger.authorize_lost_response_recovery(args.run, args.attempt_id,
                                                                  args.review_note)
+            elif args.command == "authorize-soundtrack-recheck":
+                prior, digest = image_only_manifest(args.manifest)
+                result = ledger.authorize_soundtrack_recheck(args.run, prior["attempt_id"],
+                            prior["source_url"], digest, args.user_direction)
+            elif args.command == "soundtrack-recheck":
+                result = soundtrack_recheck(args.manifest, args.run, ledger, args.output_dir,
+                                             args.shared_ledger)
             else:
                 result = capture(args.url, args.run, ledger, args.downloads, args.shared_ledger,
                                  recovery_of=args.recover_attempt)

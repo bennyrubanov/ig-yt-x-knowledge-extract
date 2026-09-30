@@ -150,6 +150,12 @@ class Ledger:
                     at REAL NOT NULL, run_id TEXT NOT NULL,
                     review_note TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS soundtrack_rechecks (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id), at REAL NOT NULL,
+                    source_url TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
+                    user_direction TEXT NOT NULL
+                );
             """)
         self._migrate_recovery_schema()
         if self.path.exists():
@@ -312,6 +318,9 @@ class Ledger:
                 raise UsageBlocked("global_hold:" + hold)
             if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone():
                 raise UsageBlocked("pending_attempt_requires_reconciliation")
+            recheck = db.execute("SELECT * FROM soundtrack_rechecks WHERE run_id=?", (run_id,)).fetchone()
+            if recheck and recovery_of != recheck["parent_attempt_id"]:
+                raise UsageBlocked("soundtrack_recheck_exact_source_only")
             if recovery_of is None:
                 if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
                               (source_host, source_id)).fetchone():
@@ -324,7 +333,10 @@ class Ledger:
                                            (recovery_of,)).fetchone()
                 allowance = db.execute("SELECT 1 FROM recovery_allowances WHERE parent_attempt_id=?",
                                        (recovery_of,)).fetchone()
-                if (not parent or not allowance or parent["run_id"] != run_id
+                lost_response_allowed = allowance and parent and parent["run_id"] == run_id
+                soundtrack_allowed = (recheck and recheck["parent_attempt_id"] == recovery_of
+                                      and recheck["source_url"] == recovery_source_url)
+                if (not parent or not (lost_response_allowed or soundtrack_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
                         or not parent_source or parent_source[0] != recovery_source_url
                         or parent["recovery_of"] is not None
@@ -334,8 +346,8 @@ class Ledger:
             if last is not None and now - last < run["min_gap_seconds"]:
                 raise UsageBlocked("minimum_gap", run["min_gap_seconds"] - (now - last))
             rows = db.execute("SELECT * FROM attempts WHERE run_id=?", (run_id,)).fetchall()
-            original_count = sum(row["recovery_of"] is None for row in rows)
-            if recovery_of is None and original_count >= run["max_requests"]:
+            original_count = len(rows) if recheck else sum(row["recovery_of"] is None for row in rows)
+            if (recovery_of is None or recheck) and original_count >= run["max_requests"]:
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
             if consumed + run["max_request_micro"] > run["budget_micro"]:
@@ -351,8 +363,53 @@ class Ledger:
                                 (run_id, source_id, source_host, now, run["max_request_micro"],
                                  expected_billing_class, recovery_of))
             attempt_id = cursor.lastrowid
-            self._event(db, "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
+            self._event(db, "soundtrack_recheck_reserved" if recheck else
+                        "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
             return attempt_id
+
+    def authorize_soundtrack_recheck(self, run_id: str, parent_attempt_id: int,
+                                    source_url: str, manifest_sha256: str,
+                                    user_direction: str) -> dict:
+        """One user-directed lookup after a verified successful image-only capture.
+
+        The capture layer verifies the manifest and files. This dedicated run
+        allows one request, preserves the parent charge, and never releases holds.
+        recovery_of links the second request; its purpose has a separate audit.
+        """
+        run_id = _token(run_id, "run_id")
+        if not isinstance(parent_attempt_id, int) or isinstance(parent_attempt_id, bool) or parent_attempt_id < 1:
+            raise ValueError("parent_attempt_id must be positive")
+        match = _SOURCE_URL.fullmatch(source_url) if isinstance(source_url, str) else None
+        if not match or "/p/" not in source_url or not re.fullmatch(r"[a-f0-9]{64}", manifest_sha256):
+            raise ValueError("exact photo-post URL and manifest hash required")
+        if (not isinstance(user_direction, str) or not 12 <= len(user_direction) <= 500
+                or any(ord(ch) < 32 for ch in user_direction)):
+            raise ValueError("user_direction must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold:
+                raise UsageBlocked("global_hold:" + hold)
+            if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL OR actual_micro IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("unreconciled_actual_charge")
+            run = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            rec = db.execute("SELECT * FROM reconciliations WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            if (not run or run["max_requests"] != 1
+                    or db.execute("SELECT 1 FROM attempts WHERE run_id=?", (run_id,)).fetchone()
+                    or not parent or parent["source_host"] != "www.instagram.com"
+                    or parent["source_id"] != match[1] or parent["recovery_of"] is not None
+                    or parent["status_code"] != 200 or parent["error_code"]
+                    or not parent["usable_media"] or not rec or rec["portal_status"] != 200
+                    or rec["source_url"] != source_url or parent["actual_micro"] != rec["actual_micro"]):
+                raise UsageBlocked("soundtrack_recheck_requires_verified_success_and_empty_one_request_run")
+            if (db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (parent_attempt_id,)).fetchone()
+                    or db.execute("SELECT 1 FROM soundtrack_rechecks WHERE parent_attempt_id=? OR run_id=?",
+                                  (parent_attempt_id, run_id)).fetchone()):
+                raise UsageBlocked("soundtrack_recheck_already_authorized_or_used")
+            db.execute("INSERT INTO soundtrack_rechecks VALUES(?,?,?,?,?,?)",
+                       (parent_attempt_id, run_id, self._clock(), source_url, manifest_sha256, user_direction))
+            self._event(db, "user_directed_soundtrack_recheck_authorized", run_id, parent_attempt_id)
+        return self.report(run_id)
 
     def authorize_lost_response_recovery(self, run_id: str, parent_attempt_id: int,
                                          review_note: str) -> dict:
@@ -624,6 +681,7 @@ class Ledger:
             events = db.execute("SELECT at,run_id,attempt_id,code FROM events WHERE run_id=? ORDER BY event_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,attempt_id,code FROM events ORDER BY event_id").fetchall()
             reviews = db.execute("SELECT at,run_id,code,note FROM reviews WHERE run_id=? ORDER BY review_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,code,note FROM reviews ORDER BY review_id").fetchall()
             allowances = db.execute("SELECT parent_attempt_id,at,run_id,review_note FROM recovery_allowances WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT parent_attempt_id,at,run_id,review_note FROM recovery_allowances ORDER BY at").fetchall()
+            rechecks = db.execute("SELECT * FROM soundtrack_rechecks WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM soundtrack_rechecks ORDER BY at").fetchall()
             recs = db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations WHERE attempt_id IN (SELECT attempt_id FROM attempts WHERE run_id=?) ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations ORDER BY attempt_id").fetchall()
             runs = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM runs ORDER BY created_at").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
@@ -656,5 +714,6 @@ class Ledger:
             "events": [dict(e) for e in events],
             "reviews": [dict(r) for r in reviews],
             "recovery_allowances": [dict(r) for r in allowances],
+            "soundtrack_rechecks": [dict(r) for r in rechecks],
             "reconciliations": [dict(r) for r in recs],
         }
