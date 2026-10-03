@@ -4,6 +4,10 @@ Agents write **knowledge notes** here. Tooling, scripts, and extraction workflow
 
 **Vault root:** `OBSIDIAN_VAULT` (or `local.env`). Knowledge only.
 
+If the vault is itself a git repository, agents only write files there: no commit, pull or push. Whatever syncs the vault owns its history.
+
+Other agents may read the vault (for example through a private repo), so notes stay about the saved sources. Leave the user's private life out of them: relationships, family, health records, money and legal plans. Put personal context in the run report instead.
+
 ---
 
 ## What belongs in Obsidian
@@ -144,7 +148,7 @@ TL;DR-only receipts are incomplete. If a note already landed thin, **backfill** 
 | IG Saved “building an app” / “marketing an app” | Receipt in `instagram/extractions/`; takeaways on `building-an-app/_index.md` / `marketing-an-app/_index.md` |
 | IG Saved “Music producing/DJ” | Receipt in `instagram/extractions/`; takeaways on `music-producing/_index.md`. Remix/sample tracks need title/artist or `track_id: unknown`, plus `vibe:` tags (tiktok / chill / orchestral / …) |
 | IG Saved “Fitness tips” | Receipt in `instagram/extractions/`; takeaways on `fitness-tips/_index.md`. **Principles first**, then named plans. Confused / CTA → BACKLOG later-review pile D. Cheap surviving habits also get one line on `health/practical-recommendations.md` |
-| IG Saved “Travel destinations/things to do” | Receipt in `instagram/extractions/`; takeaways on `travel/_index.md`. File **places**, **things to do on trips you already take**, **mechanics**, **points**, **food/hike/nightlife/Kami**, **someday**. Pretty-only → one line or skip. Ask why / when / with whom when there is a real place. Copy keep frames (map / sign / menu / itinerary) into `instagram/extractions/_media/{id}/`. |
+| IG Saved “Travel destinations/things to do” | Receipt in `instagram/extractions/`; takeaways on `travel/_index.md`. File **places**, **things to do on trips you already take**, **mechanics**, **points**, **food/hike/nightlife**, **someday**. Pretty-only → one line or skip. Ask why / when / with whom when there is a real place. Copy keep frames (map / sign / menu / itinerary) into `instagram/extractions/_media/{id}/`. |
 | IG Saved “Good info” | Receipt in `instagram/extractions/`; file to the matching hub (`health/`, `wealth/`, `travel/`, …). Leftovers on `good-info/_index.md`. Folder is a weak signal. Keep frames when the still is the fact. |
 | IG Saved “Clothes/fashion/scents” | Receipt in `instagram/extractions/`; takeaways on `clothes/_index.md`. Wear / scents / care. Pretty-only → one line or skip. |
 | IG Saved “Tennis tips” | Receipt in `instagram/extractions/`; takeaways on `tennis/_index.md`. Strokes / footwork / gear. Pretty match clips → one line. |
@@ -426,7 +430,7 @@ Live example: `wealth/investments/oZBGAuANX6I-spacex-compute-thesis.md` — macr
 
 ## Index maintenance
 
-Update `Obsidian/_index.md` when adding a **knowledge center**.
+Update the vault root's `_index.md` (`$OBSIDIAN_VAULT/_index.md`) when adding a **knowledge center**.
 
 Update that center’s `_index.md` when adding a take.
 
