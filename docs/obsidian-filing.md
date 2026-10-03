@@ -4,6 +4,8 @@ Agents write **knowledge notes** here. Tooling, scripts, and extraction workflow
 
 **Vault root:** `OBSIDIAN_VAULT` (or `local.env`). Knowledge only.
 
+If the vault is itself a git repository, agents only write files there: no commit, pull or push. Whatever syncs the vault owns its history.
+
 ---
 
 ## What belongs in Obsidian
@@ -426,7 +428,7 @@ Live example: `wealth/investments/oZBGAuANX6I-spacex-compute-thesis.md` — macr
 
 ## Index maintenance
 
-Update `Obsidian/_index.md` when adding a **knowledge center**.
+Update the vault root's `_index.md` (`$OBSIDIAN_VAULT/_index.md`) when adding a **knowledge center**.
 
 Update that center’s `_index.md` when adding a take.
 
