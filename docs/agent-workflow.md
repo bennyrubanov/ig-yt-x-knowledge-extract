@@ -228,6 +228,8 @@ ffmpeg -y -ss 42 -i ~/.config/ig-yt-x-knowledge-extract/downloads/{id}.mp4 \
   -frames:v 1 -q:v 2 /tmp/frame_42.jpg
 ```
 
+**Reading many slides cheaply (2026-10-03):** a single contact-sheet image of a carousel, or of 1-in-6-second samples from a long video, lets you read dozens of slides in one visual pass when OCR is garbled. Carousel slides often differ in size, and ffmpeg's `tile` filter silently restarts on every size change, so the sheet shows only the last slide. Normalize first (macOS: `sips -Z <cell>` then `sips -p <cell> <cell>`), then tile. Uniform video frames tile directly (`fps=1/6,scale=300:-2,tile=6x5`). Crop and zoom only the slide that carries the fact (a route map, a product card), and keep that one as the still.
+
 ### Missed frames? Re-run denser extraction
 
 If analysis reveals gaps (chart mentioned at t=37 but nearest frame is t=36 or t=38, or auto picked 2s and cuts were missed):
