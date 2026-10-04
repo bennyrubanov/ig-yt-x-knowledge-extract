@@ -6,7 +6,7 @@ Agents write **knowledge notes** here. Tooling, scripts, and extraction workflow
 
 If the vault is itself a git repository, agents only write files there: no commit, pull or push. Whatever syncs the vault owns its history.
 
-Other agents may read the vault (for example through a private repo), so notes stay about the saved sources. Leave the user's private life out of them: relationships, family, health records, money and legal plans. Put personal context in the run report instead.
+Other agents may read the vault (for example through a private repo), so notes stay about the saved sources. Leave the user's private life out of them: relationships, family, feelings, health records and legal plans. Put personal context in the run report instead.
 
 ---
 
