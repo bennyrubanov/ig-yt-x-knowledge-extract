@@ -124,7 +124,9 @@ If a model is loaded, warn and confirm before a long Whisper run. If `ollama` is
 
 | Get | How |
 |-----|-----|
-| Thread text + quotes | FixTweet (`api.fxtwitter.com`), walk parents |
+| Thread text + quotes | FixTweet (`api.fxtwitter.com`): walk parents, then the author's later posts from the v2 thread endpoint (`/2/thread/{id}`), so a saved "1/18" post brings all 18 |
+| X Articles | Full article text from the v2 payload, with its images saved as `photos/article_NN.jpg` and marked where they sit in the text (OCR runs on them) |
+| Links | Expanded URLs under each post (`Links:`); quoted posts' photos are downloaded too |
 | Photos | Download into `downloads/twitter/{id}/photos/` |
 | Video | yt-dlp (public posts work without login) |
 | Spoken audio | faster-whisper unless `--skip-whisper`; **skip if video >180s** (thread text is source of truth) |
@@ -134,7 +136,9 @@ If a model is loaded, warn and confirm before a long Whisper run. If `ollama` is
 
 **Login / age-gate / 403 on video:** export Netscape cookies to `~/.config/x-cookies.txt` (`chmod 600`) — same Chrome export as IG. Do not commit.
 
-**Won’t get:** protected accounts you can’t see, DMs, Spaces, deleted tweets, other people’s reply trees (author thread only).
+**Won’t get:** protected accounts you can’t see, DMs, Spaces, deleted tweets, other people’s reply trees (author thread only). Videos over 180s (podcasts) keep thread text as the source; when the post links the episode on YouTube, take its captions with `igx youtube`.
+
+**2026-10-08 thread check:** before this fix the extractor only walked parents, so a saved first post of a thread lost every later post (a saved 1/18 creatine thread came back as one post), and X Article posts came back as a bare link. Both now come through.
 
 **Obsidian:** `twitter/{id}-{slug}.md` (or topic hub). Read photos + frames with vision.
 
@@ -149,7 +153,7 @@ Native EN captions first (~15–30s). Else audio + Whisper.
 | **Available subtitles** (`en`) | Creator-uploaded | **Source of truth** |
 | **Available automatic captions** (`en-en`, `en-orig`) | YouTube ASR | Fallback if no manual track |
 
-Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
+Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. If YouTube answers the caption request with HTTP 429 (it rate-limits the translated `en` auto track, and yt-dlp then stops before `en-orig`), the script waits 5s and retries `en-orig` alone (2026-10-08). `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
 
 Measured (Dwarkesh `oZBGAuANX6I`): manual captions beat Whisper `small` on names/numbers (`Fable` vs `available`, `10x'd` vs `10x to`). ~91% word overlap.
 
@@ -535,3 +539,10 @@ but is not a shrinking authorization balance. A normal request-count or budget
 stop ends only that run. Before starting another, reconcile all actual charges;
 an unresolved provider, billing, media, or fast-spending hold still blocks all
 runs. This change does not permit personal-account Instagram extraction.
+
+## Reddit and paywalled articles (2026-10-08)
+
+**Reddit:** `python3 scripts/reddit-fetch.py URL OUTDIR` takes share links (`/r/x/s/…`), post and comment URLs. Reddit returns 403 to the anonymous `.json` API, but the post's Atom feed works: `thread.txt` lists the post, the saved comment, every reply by the original poster, then the other comments (flat, no nesting; Reddit caps the feed at a few hundred comments).
+
+**Medium member-only stories:** a plain fetch and String (with or without JavaScript) return only the preview. When the page offers the author's free "friend link", open it in a real browser (the Claude Code browser pane) and read the article element; record the method in the note.
+

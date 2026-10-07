@@ -91,6 +91,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub_log.write_text((proc.stdout or "") + (proc.stderr or ""), encoding="utf-8")
     sub_file, sub_kind = _pick_sub(download_dir, mid)
+    if not sub_file and "429" in sub_log.read_text(encoding="utf-8"):
+        # YouTube rate-limits the translated "en" auto track (HTTP 429) and yt-dlp
+        # then stops before the original-language track, which usually still works.
+        print("      Captions hit HTTP 429 — retrying the original auto track (en-orig)...", file=sys.stderr)
+        time.sleep(5)
+        retry = ytdlp(
+            [
+                "--write-auto-subs",
+                "--sub-langs",
+                "en-orig",
+                "--sub-format",
+                "srt/best,vtt/best",
+                "--convert-subs",
+                "srt",
+                "--skip-download",
+                "-o",
+                str(download_dir / f"{mid}.%(ext)s"),
+                args.url,
+            ],
+            capture=True,
+        )
+        with sub_log.open("a", encoding="utf-8") as f:
+            f.write("\n--- retry en-orig ---\n" + (retry.stdout or "") + (retry.stderr or ""))
+        sub_file, sub_kind = _pick_sub(download_dir, mid)
     meta = download_dir / f"{mid}.captions.meta"
     if sub_file:
         meta.write_text(

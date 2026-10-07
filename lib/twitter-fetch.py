@@ -2,8 +2,12 @@
 """Fetch a public X/Twitter status via FixTweet and save text + photos.
 
 Usage: twitter-fetch.py TWEET_URL_OR_ID OUTPUT_DIR
-Writes: tweet.json, thread.txt, photos/photo_NN.ext
+Writes: tweet.json, thread.json, thread.txt, photos/photo_NN.ext
 Prints: id\\thandle\\tphoto_count\\thas_video
+
+thread.txt holds the parents, the saved post, the author's later posts in the
+same thread (FixTweet v2 thread endpoint), quoted posts, X Article bodies and
+expanded links.
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 API = "https://api.fxtwitter.com/status/{id}"
+THREAD_API = "https://api.fxtwitter.com/2/thread/{id}"
 ID_RE = re.compile(r"(?:status|statuses)/(\d+)")
 
 
@@ -27,13 +32,14 @@ def status_id(arg: str) -> str:
     raise SystemExit(f"Could not parse tweet id from: {arg}")
 
 
-def fetch(tid: str) -> dict:
-    req = urllib.request.Request(
-        API.format(id=tid),
-        headers={"User-Agent": "ig-yt-x-knowledge-extract/1.0"},
-    )
+def get_json(url: str) -> dict:
+    req = urllib.request.Request(url, headers={"User-Agent": "ig-yt-x-knowledge-extract/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch(tid: str) -> dict:
+    data = get_json(API.format(id=tid))
     if data.get("code") != 200 or "tweet" not in data:
         raise SystemExit(f"FixTweet error for {tid}: {data}")
     return data["tweet"]
@@ -65,6 +71,70 @@ def walk_thread(start: dict) -> list[dict]:
         parent = t.get("replying_to_status")
     tweets.reverse()
     return tweets
+
+
+def fetch_v2(tid: str) -> dict:
+    """FixTweet v2 thread payload ({} when unavailable)."""
+    try:
+        data = get_json(THREAD_API.format(id=tid))
+    except Exception as e:
+        print(f"WARNING: FixTweet v2 thread unavailable: {e}", file=sys.stderr)
+        return {}
+    return data if data.get("code") == 200 else {}
+
+
+def later_posts(start: dict, v2: dict) -> list[dict]:
+    """The author's own posts after the saved one (a 1/N thread's continuation)."""
+    handle = ((start.get("author") or {}).get("screen_name") or "").lower()
+    out = []
+    for t in v2.get("thread") or []:
+        author = ((t.get("author") or {}).get("screen_name") or "").lower()
+        if author == handle and str(t.get("id", "")).isdigit() and int(t["id"]) > int(start["id"]):
+            out.append(t)
+    return sorted(out, key=lambda t: int(t["id"]))
+
+
+def article_media(article: dict) -> dict[str, tuple[str, str]]:
+    """media_id -> (kind, image URL) for an X Article's images and video previews."""
+    out: dict[str, tuple[str, str]] = {}
+    for m in article.get("media_entities") or []:
+        info = m.get("media_info") or {}
+        if info.get("original_img_url"):
+            out[str(m.get("media_id"))] = ("image", info["original_img_url"])
+        elif (info.get("preview_image") or {}).get("original_img_url"):
+            out[str(m.get("media_id"))] = ("video preview", info["preview_image"]["original_img_url"])
+    return out
+
+
+def article_text(article: dict, names: dict[str, str] | None = None) -> str:
+    """Title and paragraphs of an X Article (draft.js blocks), with image markers."""
+    names = names or {}
+    content = article.get("content") or {}
+    emap = content.get("entityMap") or {}
+    if isinstance(emap, list):
+        emap = {str(e.get("key")): e.get("value") or {} for e in emap}
+    lines = [(article.get("title") or "").strip(), ""]
+    for b in content.get("blocks") or []:
+        if b.get("type") == "atomic":
+            for r in b.get("entityRanges") or []:
+                data = (emap.get(str(r.get("key"))) or {}).get("data") or {}
+                for item in data.get("mediaItems") or []:
+                    if names.get(str(item.get("mediaId"))):
+                        lines.append(f"[{names[str(item.get('mediaId'))]}]")
+            continue
+        text = (b.get("text") or "").strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines).strip()
+
+
+def links(tweet: dict) -> list[str]:
+    urls = []
+    for f in (tweet.get("raw_text") or {}).get("facets") or []:
+        u = f.get("replacement") or ""
+        if f.get("type") == "url" and u and u not in urls:
+            urls.append(u)
+    return urls
 
 
 def media_photos(tweet: dict) -> list[str]:
@@ -102,7 +172,9 @@ def main() -> None:
     photos_dir.mkdir(exist_ok=True)
 
     tweet = fetch(tid)
-    thread = walk_thread(tweet)
+    v2 = fetch_v2(tid)
+    thread = walk_thread(tweet) + later_posts(tweet, v2)
+    article = (v2.get("status") or {}).get("article") or tweet.get("article")
     (out / "tweet.json").write_text(json.dumps(tweet, indent=2) + "\n", encoding="utf-8")
     (out / "thread.json").write_text(json.dumps(thread, indent=2) + "\n", encoding="utf-8")
 
@@ -113,10 +185,20 @@ def main() -> None:
         handle = (t.get("author") or {}).get("screen_name") or "?"
         text = (t.get("text") or "").strip()
         lines.append(f"@{handle} ({t.get('id')}):\n{text}\n")
+        if links(t):
+            lines.append("  Links: " + " ".join(links(t)) + "\n")
         if t.get("quote"):
             q = t["quote"]
             qh = (q.get("author") or {}).get("screen_name") or "?"
-            lines.append(f"  QT @{qh}: {(q.get('text') or '').strip()}\n")
+            lines.append(f"  QT @{qh} ({q.get('id')}): {(q.get('text') or '').strip()}\n")
+            if isinstance(q.get("article"), dict):
+                lines.append("  QT article: " + article_text(q["article"]) + "\n")
+            for url in media_photos(q):
+                photo_n += 1
+                try:
+                    download(url, photos_dir / f"photo_{photo_n:02d}{ext_from_url(url)}")
+                except Exception as e:
+                    print(f"WARNING: quoted photo download failed: {e}", file=sys.stderr)
         video = video or has_video(t)
         for url in media_photos(t):
             photo_n += 1
@@ -126,6 +208,16 @@ def main() -> None:
             except Exception as e:
                 print(f"WARNING: photo download failed: {e}", file=sys.stderr)
 
+    if isinstance(article, dict):
+        names: dict[str, str] = {}
+        for n, (mid, (kind, url)) in enumerate(article_media(article).items(), 1):
+            dest = photos_dir / f"article_{n:02d}{ext_from_url(url)}"
+            try:
+                download(url, dest)
+                names[mid] = f"article {kind}: photos/{dest.name}"
+            except Exception as e:
+                print(f"WARNING: article media download failed: {e}", file=sys.stderr)
+        lines.append("=== X Article ===\n" + article_text(article, names) + "\n")
     (out / "thread.txt").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     handle = (tweet.get("author") or {}).get("screen_name") or "unknown"
     print(f"{tid}\t{handle}\t{photo_n}\t{int(video)}")
