@@ -251,6 +251,8 @@ and full decoding are checked before a capture manifest is finalized. A reel
 thumbnail alone cannot pass. ffprobe/ffmpeg validation only allows local file
 protocols, so a disguised playlist cannot fetch additional URLs.
 
+Reels over two minutes get frames every 2 seconds (shorter ones every second) and OCR, so on-screen text, charts and products in long reels are not lost (2026-10-08; before this they got no frames).
+
 Successful output includes `SHORTCODE.public.json`, caption and media files in
 `downloads/`. The manifest stores file hashes, probes, provider attempt and
 source provenance, without temporary download URLs. Then:

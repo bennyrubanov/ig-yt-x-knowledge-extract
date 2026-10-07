@@ -317,7 +317,7 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
 
 def process_local(manifest_path: Path, model: str = "small", frame_interval: str = "1", skip_whisper: bool = False) -> dict:
     from frame_extract import frame_extract
-    from tooling import extract_audio_aac, has_audio_stream, ocr_to_file, warn_ollama
+    from tooling import extract_audio_aac, has_audio_stream, ocr_to_file, probe_duration, warn_ollama
     from whisper_run import whisper_transcribe
     manifest = json.loads(manifest_path.read_text())
     mid = manifest["source_id"]
@@ -343,7 +343,10 @@ def process_local(manifest_path: Path, model: str = "small", frame_interval: str
                 if not whisper_transcribe(audio, directory, model):
                     raise CaptureStopped("local_transcription_failed")
         if file["kind"] == "video":
-            result = frame_extract(media, frames, frame_interval)
+            # Reels over two minutes still get frames (every 2s): on-screen text,
+            # charts and products matter as much there (2026-10-08).
+            long_video = probe_duration(media) > 120
+            result = frame_extract(media, frames, "2" if long_video else frame_interval, skip_long=False)
             if result.count:
                 ocr_to_file(frames, out=directory / f"{stem}.ocr.txt")
         outputs.append({"source_id": mid, "audio": str(audio) if audio.is_file() else None,
