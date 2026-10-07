@@ -548,3 +548,9 @@ runs. This change does not permit personal-account Instagram extraction.
 
 **Medium member-only stories:** a plain fetch and String (with or without JavaScript) return only the preview. When the page offers the author's free "friend link", open it in a real browser (the Claude Code browser pane) and read the article element; record the method in the note.
 
+## Parallel note writers (2026-10-08)
+
+For a big queue, the coordinating session captures, routes and marks; smaller-model subagents write the notes from local material only, using [note-writer-brief.md](note-writer-brief.md) and a manifest slice of 10–15 items each. Review the first few notes before scaling. Each writer appends one JSON result line per note (path, hubs, hub line, project relevance, coverage, flags) to its own results file, which drives the hub sections, the project handoffs and the Notion marking. Writers share a scratch directory, so tell them to name helper scripts after their slice; two writers once overwrote each other's helper and logged lines into the wrong results file. Dedupe results by key.
+
+A save whose Notion title is empty or just "Instagram" is not a sign the post is private: 31 of 33 such saves captured fine on 2026-10-08.
+
