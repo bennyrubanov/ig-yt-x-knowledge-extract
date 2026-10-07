@@ -108,9 +108,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if video and not args.skip_whisper:
         duration_int = int(probe_duration(Path(video)))
-        if duration_int > 180:
+        if duration_int > 600:
             print(
-                f"[3/4] Skip Whisper (video {duration_int}s > 180s; thread.txt is source of truth).",
+                f"[3/4] Skip Whisper (video {duration_int}s > 600s; thread.txt is source of truth).",
                 file=sys.stderr,
             )
         else:
@@ -151,6 +151,16 @@ def main(argv: list[str] | None = None) -> int:
     if ocr_dirs:
         ocr_to_file(*ocr_dirs, out=out / f"{mid}.ocr.txt")
 
+    # Videos inside quoted posts (downloaded by twitter-fetch.py): transcribe short ones.
+    for qv in sorted(out.glob("quote_video_*.mp4")):
+        if args.skip_whisper or probe_duration(qv) > 600:
+            continue
+        qa = qv.with_suffix(".m4a")
+        if extract_audio_aac(qv, qa):
+            qt = whisper_transcribe(qa, out, args.model)
+            if qt and qt.is_file():
+                with txt.open("a", encoding="utf-8") as f:
+                    f.write(f"\n\n=== Quoted video transcript ({qv.name}) ===\n" + qt.read_text(encoding="utf-8", errors="replace"))
     print("[4/4] Done.", file=sys.stderr)
     print("--- Summary ---", file=sys.stderr)
     print(f"ID:       {mid}", file=sys.stderr)

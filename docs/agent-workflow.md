@@ -127,9 +127,11 @@ If a model is loaded, warn and confirm before a long Whisper run. If `ollama` is
 | Thread text + quotes | FixTweet (`api.fxtwitter.com`): walk parents, then the author's later posts from the v2 thread endpoint (`/2/thread/{id}`), so a saved "1/18" post brings all 18 |
 | X Articles | Full article text from the v2 payload, with its images saved as `photos/article_NN.jpg` and marked where they sit in the text (OCR runs on them) |
 | Links | Expanded URLs under each post (`Links:`); quoted posts' photos are downloaded too |
+| Community notes, polls | Written under the post they belong to (a note can change whether a claim holds) |
+| Quoted posts | Text, photos, X Article, community note, and video (`quote_video_NN.mp4`, transcribed when ≤600s) |
 | Photos | Download into `downloads/twitter/{id}/photos/` |
 | Video | yt-dlp (public posts work without login) |
-| Spoken audio | faster-whisper unless `--skip-whisper`; **skip if video >180s** (thread text is source of truth) |
+| Spoken audio | faster-whisper unless `--skip-whisper`; **skip if video >600s** (raised from 180s on 2026-10-08: a 189s webinar clip carried the method; longer podcasts keep thread text, or use the episode's YouTube captions) |
 | Frames | ≤120s videos, same as reels |
 
 **Disk bomb (fixed 2026-08-18):** never `cat` the combined `{id}.txt` onto itself. Whisper writes `{id}.audio.m4a` / a sidecar; stdout is `thread.txt` only. If a `{id}.txt` starts growing without bound, kill the script + the `cat` child and restore from `thread.txt`.

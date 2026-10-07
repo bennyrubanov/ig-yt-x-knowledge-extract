@@ -128,6 +128,25 @@ def article_text(article: dict, names: dict[str, str] | None = None) -> str:
     return "\n".join(lines).strip()
 
 
+def extras(tweet: dict) -> list[str]:
+    """Community note and poll lines for one post (both change how a post reads)."""
+    out = []
+    note = tweet.get("community_note")
+    if isinstance(note, dict) and (note.get("text") or "").strip():
+        out.append("  Community note: " + note["text"].strip().replace("\n", " "))
+    poll = tweet.get("poll")
+    if isinstance(poll, dict) and poll.get("choices"):
+        choices = " | ".join(f"{c.get('label')} ({c.get('percentage', '?')}%)" for c in poll["choices"])
+        out.append(f"  Poll ({poll.get('total_votes', '?')} votes): {choices}")
+    return out
+
+
+def video_urls(tweet: dict) -> list[tuple[str, float]]:
+    media = tweet.get("media") or {}
+    return [(v["url"], float(v.get("duration") or 0)) for v in media.get("videos") or []
+            if isinstance(v, dict) and v.get("url")]
+
+
 def links(tweet: dict) -> list[str]:
     urls = []
     for f in (tweet.get("raw_text") or {}).get("facets") or []:
@@ -180,6 +199,7 @@ def main() -> None:
 
     lines: list[str] = []
     photo_n = 0
+    quote_videos = 0
     video = False
     for t in thread:
         handle = (t.get("author") or {}).get("screen_name") or "?"
@@ -187,10 +207,20 @@ def main() -> None:
         lines.append(f"@{handle} ({t.get('id')}):\n{text}\n")
         if links(t):
             lines.append("  Links: " + " ".join(links(t)) + "\n")
+        lines += [x + "\n" for x in extras(t)]
         if t.get("quote"):
             q = t["quote"]
             qh = (q.get("author") or {}).get("screen_name") or "?"
             lines.append(f"  QT @{qh} ({q.get('id')}): {(q.get('text') or '').strip()}\n")
+            lines += [x + "\n" for x in extras(q)]
+            for url, seconds in video_urls(q):
+                quote_videos += 1
+                dest = out / f"quote_video_{quote_videos:02d}.mp4"
+                try:
+                    download(url, dest)
+                    lines.append(f"  QT video ({int(seconds)}s): {dest.name}\n")
+                except Exception as e:
+                    print(f"WARNING: quoted video download failed: {e}", file=sys.stderr)
             if isinstance(q.get("article"), dict):
                 lines.append("  QT article: " + article_text(q["article"]) + "\n")
             for url in media_photos(q):
