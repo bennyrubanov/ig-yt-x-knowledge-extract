@@ -181,6 +181,27 @@ provider response before any media processing. It does not infer that field
 from destination HTML. Request IDs are sanitized; bodies, cookies, keys and
 temporary signed media URLs are excluded from usage records.
 
+### Reviewed release after one source's media failed
+
+A media or validation failure latches `media_capture_or_validation_failed`
+after the paid page fetch has already succeeded, so the hold protects against a
+run of useless paid fetches, not against extra spend on that source. The reason
+is kept locally in `downloads/{id}.capture-error.txt`. After reviewing it (and
+any files already saved), the coordinator may release the hold for that one
+source; the user approved this on 2026-10-07 for queue runs:
+
+```bash
+python scripts/igx.py public-capture resume-reviewed-media-failure \
+  --run approved-queue-run --source SHORTCODE \
+  --review-note 'Page fetch 200; 7 slides valid; 8th asset failed validation'
+```
+
+The failed attempt must be the ledger's latest, settled with HTTP 200 and with
+no other hold since the last reviewed release. It stays recorded as unusable
+and is never fetched again. A run allows at most two such releases, so a third
+media failure stops it for good. File the source from what was saved and state
+the missing item in the note.
+
 ### One user-directed carousel soundtrack recheck
 
 If the user explicitly asks to retry a missing carousel song, first check local

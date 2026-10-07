@@ -303,7 +303,12 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
                     "soundtrack_note": "An image-only capture does not establish carousel soundtrack availability."}
         write_json(directory / f"{mid}.public.json", manifest)
         ledger.mark_media(attempt, usable=True)
-    except Exception:
+    except Exception as exc:
+        try:
+            (directory / f"{mid}.capture-error.txt").write_text(
+                f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+        except OSError:
+            pass
         ledger.hold("media_capture_or_validation_failed")
         raise CaptureStopped("media_capture_or_validation_failed") from None
     return {"cached": False, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
@@ -378,6 +383,11 @@ def main(argv=None) -> int:
     resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
     resume.add_argument("--run", required=True)
     resume.add_argument("--review-note", required=True)
+    media_resume = sub.add_parser("resume-reviewed-media-failure",
+                                  help="Release one reviewed media-validation hold (at most two per run)")
+    media_resume.add_argument("--run", required=True)
+    media_resume.add_argument("--source", required=True)
+    media_resume.add_argument("--review-note", required=True)
     recovery = sub.add_parser("authorize-lost-response-recovery",
                               help="Offline one-time allowance for a portal-confirmed paid response lost locally")
     recovery.add_argument("--run", required=True)
@@ -417,6 +427,8 @@ def main(argv=None) -> int:
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
             elif args.command == "resume-reviewed-timeout":
                 result = ledger.resume_reviewed_timeout(args.run, args.review_note)
+            elif args.command == "resume-reviewed-media-failure":
+                result = ledger.resume_reviewed_media_failure(args.run, args.source, args.review_note)
             elif args.command == "authorize-lost-response-recovery":
                 result = ledger.authorize_lost_response_recovery(args.run, args.attempt_id,
                                                                  args.review_note)
