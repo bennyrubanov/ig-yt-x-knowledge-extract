@@ -153,7 +153,7 @@ Native EN captions first (~15–30s). Else audio + Whisper.
 | **Available subtitles** (`en`) | Creator-uploaded | **Source of truth** |
 | **Available automatic captions** (`en-en`, `en-orig`) | YouTube ASR | Fallback if no manual track |
 
-Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. If YouTube answers the caption request with HTTP 429 (it rate-limits the translated `en` auto track, and yt-dlp then stops before `en-orig`), the script waits 5s and retries `en-orig` alone (2026-10-08). `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
+Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. If YouTube answers the caption request with HTTP 429 (it rate-limits the translated `en` auto track, and yt-dlp then stops before `en-orig`), the script waits 5s and retries `en-orig` alone (2026-10-08). When YouTube answers "Sign in to confirm you're not a bot", yt-dlp resolves no video ID; the script now stops instead of continuing with an empty ID (that once wrote another video's captions as the transcript). Wait and retry later; do not pass browser cookies. `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
 
 Measured (Dwarkesh `oZBGAuANX6I`): manual captions beat Whisper `small` on names/numbers (`Fable` vs `available`, `10x'd` vs `10x to`). ~91% word overlap.
 

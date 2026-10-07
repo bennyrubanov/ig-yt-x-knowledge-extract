@@ -63,6 +63,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print("[1/4] Resolving video...", file=sys.stderr)
     mid = ytdlp_print("id", args.url)
+    if not mid:
+        # yt-dlp prints nothing when YouTube answers "Sign in to confirm you're not
+        # a bot". Never continue with an empty ID: the caption glob below would
+        # then pick up another video's subtitles.
+        raise SystemExit(
+            "yt-dlp could not resolve this video (YouTube may be asking to confirm "
+            "you're not a bot). Wait and retry; nothing was written."
+        )
     title = ytdlp_print("title", args.url)
     desc_file = download_dir / f"{mid}.description.txt"
     desc_file.write_text(ytdlp(["--print", "description", args.url], capture=True).stdout or "", encoding="utf-8")
