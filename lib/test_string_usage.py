@@ -351,6 +351,28 @@ class StringUsageTests(unittest.TestCase):
                     ledger.resume_reviewed_timeout("queue1", "Reviewed exact portal row")
                 self.assertEqual(ledger.report()["global_hold"], hold_reason)
 
+    def test_reviewed_media_failure_resume_is_capped_per_run(self):
+        self.run_with(min_gap_seconds=0)
+        for n, source in enumerate(("abc123", "def456", "ghi789")):
+            attempt = self.ledger.reserve("queue1", source)
+            self.ledger.complete(attempt, 200, billed_request_type="request_premium")
+            self.ledger.hold("media_capture_or_validation_failed")
+            if n < 2:
+                report = self.ledger.resume_reviewed_media_failure("queue1", source, "Reviewed failed slide")
+                self.assertIsNone(report["global_hold"])
+            else:
+                with self.assertRaisesRegex(UsageBlocked, "run_media_failure_limit_reached"):
+                    self.ledger.resume_reviewed_media_failure("queue1", source, "Reviewed failed slide")
+        self.assertEqual(self.ledger.report()["global_hold"], "media_capture_or_validation_failed")
+
+    def test_media_resume_refuses_other_holds(self):
+        self.run_with(min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(attempt, 200, billed_request_type="request_premium")
+        self.ledger.hold("provider_wall_time_exceeded")
+        with self.assertRaisesRegex(UsageBlocked, "hold_not_eligible_for_media_resume"):
+            self.ledger.resume_reviewed_media_failure("queue1", "abc123", "Reviewed failed slide")
+
     def test_other_latched_hold_event_prevents_timeout_resume(self):
         self.run_with()
         self.ledger.reserve("queue1", "abc123")

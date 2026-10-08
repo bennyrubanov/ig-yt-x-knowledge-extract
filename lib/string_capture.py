@@ -303,7 +303,12 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
                     "soundtrack_note": "An image-only capture does not establish carousel soundtrack availability."}
         write_json(directory / f"{mid}.public.json", manifest)
         ledger.mark_media(attempt, usable=True)
-    except Exception:
+    except Exception as exc:
+        try:
+            (directory / f"{mid}.capture-error.txt").write_text(
+                f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+        except OSError:
+            pass
         ledger.hold("media_capture_or_validation_failed")
         raise CaptureStopped("media_capture_or_validation_failed") from None
     return {"cached": False, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
@@ -312,7 +317,7 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
 
 def process_local(manifest_path: Path, model: str = "small", frame_interval: str = "1", skip_whisper: bool = False) -> dict:
     from frame_extract import frame_extract
-    from tooling import extract_audio_aac, has_audio_stream, ocr_to_file, warn_ollama
+    from tooling import extract_audio_aac, has_audio_stream, ocr_to_file, probe_duration, warn_ollama
     from whisper_run import whisper_transcribe
     manifest = json.loads(manifest_path.read_text())
     mid = manifest["source_id"]
@@ -338,7 +343,10 @@ def process_local(manifest_path: Path, model: str = "small", frame_interval: str
                 if not whisper_transcribe(audio, directory, model):
                     raise CaptureStopped("local_transcription_failed")
         if file["kind"] == "video":
-            result = frame_extract(media, frames, frame_interval)
+            # Reels over two minutes still get frames (every 2s): on-screen text,
+            # charts and products matter as much there (2026-10-08).
+            long_video = probe_duration(media) > 120
+            result = frame_extract(media, frames, "2" if long_video else frame_interval, skip_long=False)
             if result.count:
                 ocr_to_file(frames, out=directory / f"{stem}.ocr.txt")
         outputs.append({"source_id": mid, "audio": str(audio) if audio.is_file() else None,
@@ -378,6 +386,11 @@ def main(argv=None) -> int:
     resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
     resume.add_argument("--run", required=True)
     resume.add_argument("--review-note", required=True)
+    media_resume = sub.add_parser("resume-reviewed-media-failure",
+                                  help="Release one reviewed media-validation hold (at most two per run)")
+    media_resume.add_argument("--run", required=True)
+    media_resume.add_argument("--source", required=True)
+    media_resume.add_argument("--review-note", required=True)
     recovery = sub.add_parser("authorize-lost-response-recovery",
                               help="Offline one-time allowance for a portal-confirmed paid response lost locally")
     recovery.add_argument("--run", required=True)
@@ -417,6 +430,8 @@ def main(argv=None) -> int:
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
             elif args.command == "resume-reviewed-timeout":
                 result = ledger.resume_reviewed_timeout(args.run, args.review_note)
+            elif args.command == "resume-reviewed-media-failure":
+                result = ledger.resume_reviewed_media_failure(args.run, args.source, args.review_note)
             elif args.command == "authorize-lost-response-recovery":
                 result = ledger.authorize_lost_response_recovery(args.run, args.attempt_id,
                                                                  args.review_note)

@@ -124,17 +124,23 @@ If a model is loaded, warn and confirm before a long Whisper run. If `ollama` is
 
 | Get | How |
 |-----|-----|
-| Thread text + quotes | FixTweet (`api.fxtwitter.com`), walk parents |
+| Thread text + quotes | FixTweet (`api.fxtwitter.com`): walk parents, then the author's later posts from the v2 thread endpoint (`/2/thread/{id}`), so a saved "1/18" post brings all 18 |
+| X Articles | Full article text from the v2 payload, with its images saved as `photos/article_NN.jpg` and marked where they sit in the text (OCR runs on them) |
+| Links | Expanded URLs under each post (`Links:`); quoted posts' photos are downloaded too |
+| Community notes, polls | Written under the post they belong to (a note can change whether a claim holds) |
+| Quoted posts | Text, photos, X Article, community note, and video (`quote_video_NN.mp4`, transcribed when ≤600s) |
 | Photos | Download into `downloads/twitter/{id}/photos/` |
 | Video | yt-dlp (public posts work without login) |
-| Spoken audio | faster-whisper unless `--skip-whisper`; **skip if video >180s** (thread text is source of truth) |
+| Spoken audio | faster-whisper unless `--skip-whisper`; **skip if video >600s** (raised from 180s on 2026-10-08: a 189s webinar clip carried the method; longer podcasts keep thread text, or use the episode's YouTube captions) |
 | Frames | ≤120s videos, same as reels |
 
 **Disk bomb (fixed 2026-08-18):** never `cat` the combined `{id}.txt` onto itself. Whisper writes `{id}.audio.m4a` / a sidecar; stdout is `thread.txt` only. If a `{id}.txt` starts growing without bound, kill the script + the `cat` child and restore from `thread.txt`.
 
 **Login / age-gate / 403 on video:** export Netscape cookies to `~/.config/x-cookies.txt` (`chmod 600`) — same Chrome export as IG. Do not commit.
 
-**Won’t get:** protected accounts you can’t see, DMs, Spaces, deleted tweets, other people’s reply trees (author thread only).
+**Won’t get:** protected accounts you can’t see, DMs, Spaces, deleted tweets, other people’s reply trees (author thread only). Videos over 180s (podcasts) keep thread text as the source; when the post links the episode on YouTube, take its captions with `igx youtube`.
+
+**2026-10-08 thread check:** before this fix the extractor only walked parents, so a saved first post of a thread lost every later post (a saved 1/18 creatine thread came back as one post), and X Article posts came back as a bare link. Both now come through.
 
 **Obsidian:** `twitter/{id}-{slug}.md` (or topic hub). Read photos + frames with vision.
 
@@ -149,7 +155,7 @@ Native EN captions first (~15–30s). Else audio + Whisper.
 | **Available subtitles** (`en`) | Creator-uploaded | **Source of truth** |
 | **Available automatic captions** (`en-en`, `en-orig`) | YouTube ASR | Fallback if no manual track |
 
-Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
+Script prefers `{id}.en.srt` and writes `{id}.captions.meta`. If YouTube answers the caption request with HTTP 429 (it rate-limits the translated `en` auto track, and yt-dlp then stops before `en-orig`), the script waits 5s and retries `en-orig` alone (2026-10-08). When YouTube answers "Sign in to confirm you're not a bot", yt-dlp resolves no video ID; the script now stops instead of continuing with an empty ID (that once wrote another video's captions as the transcript). Wait and retry later; do not pass browser cookies. `--force-whisper` writes `{id}.whisper.txt` for comparison; never overwrite caption `{id}.txt`.
 
 Measured (Dwarkesh `oZBGAuANX6I`): manual captions beat Whisper `small` on names/numbers (`Fable` vs `available`, `10x'd` vs `10x to`). ~91% word overlap.
 
@@ -535,3 +541,16 @@ but is not a shrinking authorization balance. A normal request-count or budget
 stop ends only that run. Before starting another, reconcile all actual charges;
 an unresolved provider, billing, media, or fast-spending hold still blocks all
 runs. This change does not permit personal-account Instagram extraction.
+
+## Reddit and paywalled articles (2026-10-08)
+
+**Reddit:** `python3 scripts/reddit-fetch.py URL OUTDIR` takes share links (`/r/x/s/…`), post and comment URLs. Reddit returns 403 to the anonymous `.json` API, but the post's Atom feed works: `thread.txt` lists the post, the saved comment, every reply by the original poster, then the other comments (flat, no nesting; Reddit caps the feed at a few hundred comments).
+
+**Medium member-only stories:** a plain fetch and String (with or without JavaScript) return only the preview. When the page offers the author's free "friend link", open it in a real browser (the Claude Code browser pane) and read the article element; record the method in the note.
+
+## Parallel note writers (2026-10-08)
+
+For a big queue, the coordinating session captures, routes and marks; smaller-model subagents write the notes from local material only, using [note-writer-brief.md](note-writer-brief.md) and a manifest slice of 10–15 items each. Review the first few notes before scaling. Each writer appends one JSON result line per note (path, hubs, hub line, project relevance, coverage, flags) to its own results file, which drives the hub sections, the project handoffs and the Notion marking. Writers share a scratch directory, so tell them to name helper scripts after their slice; two writers once overwrote each other's helper and logged lines into the wrong results file. Dedupe results by key.
+
+A save whose Notion title is empty or just "Instagram" is not a sign the post is private: 31 of 33 such saves captured fine on 2026-10-08.
+

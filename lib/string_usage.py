@@ -670,6 +670,46 @@ class Ledger:
                        (self._clock(), run_id, "reviewed_timeout_resume", review_note))
         return self.report(run_id)
 
+    def resume_reviewed_media_failure(self, run_id: str, source_id: str, review_note: str,
+                                      max_per_run: int = 2) -> dict:
+        """Release one reviewed media-validation hold so the run can go on.
+
+        The paid page fetch succeeded; only that source's media failed locally.
+        The attempt stays recorded as unusable and is never fetched again. A run
+        gets at most ``max_per_run`` releases, so a third failure still stops it.
+        """
+        run_id = _token(run_id, "run_id")
+        source_id = _token(source_id, "source_id")
+        if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
+                or any(ord(ch) < 32 for ch in review_note)):
+            raise ValueError("review_note must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold != "media_capture_or_validation_failed":
+                raise UsageBlocked("hold_not_eligible_for_media_resume:" + str(hold))
+            last_resume = db.execute("SELECT COALESCE(MAX(event_id),0) FROM events WHERE code IN "
+                                     "('reviewed_timeout_resume','reviewed_media_resume')").fetchone()[0]
+            hold_events = [r[0][5:] for r in db.execute(
+                "SELECT code FROM events WHERE event_id>? AND code LIKE 'hold:%'", (last_resume,))]
+            if hold_events != ["media_capture_or_validation_failed"]:
+                raise UsageBlocked("other_safety_hold_requires_review")
+            if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("ledger_has_pending_attempt")
+            last = db.execute("SELECT * FROM attempts ORDER BY attempt_id DESC LIMIT 1").fetchone()
+            if (not last or last["run_id"] != run_id or last["source_id"] != source_id
+                    or last["status_code"] != 200 or last["error_code"] or last["usable_media"] == 1):
+                raise UsageBlocked("failed_attempt_is_not_the_latest_successful_fetch")
+            released = db.execute("SELECT COUNT(*) FROM events WHERE code='reviewed_media_resume' "
+                                  "AND run_id=?", (run_id,)).fetchone()[0]
+            if released >= max_per_run:
+                raise UsageBlocked("run_media_failure_limit_reached")
+            db.execute("UPDATE attempts SET usable_media=0 WHERE attempt_id=?", (last["attempt_id"],))
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+            self._event(db, "reviewed_media_resume", run_id, last["attempt_id"])
+            db.execute("INSERT INTO reviews(at,run_id,code,note) VALUES(?,?,?,?)",
+                       (self._clock(), run_id, "reviewed_media_resume", review_note))
+        return self.report(run_id)
+
     def report(self, run_id: str | None = None) -> dict:
         if run_id is not None:
             _token(run_id, "run_id")
