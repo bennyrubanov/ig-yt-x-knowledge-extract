@@ -554,3 +554,9 @@ For a big queue, the coordinating session captures, routes and marks; smaller-mo
 
 A save whose Notion title is empty or just "Instagram" is not a sign the post is private: 31 of 33 such saves captured fine on 2026-10-08.
 
+## Slow networks, portal times and re-slicing writers (2026-10-13)
+
+- **Media downloads crawling at 30+ seconds per asset:** on some networks the Instagram CDN hosts resolve to IPv6 addresses that never answer, and `urllib` waits out its 30-second connect timeout on each asset before falling back to IPv4 (seen as sockets stuck in `SYN_SENT`). The paid page fetch is unaffected; only the downloads crawl. Prefer IPv4 in the run wrapper by filtering `socket.getaddrinfo` to `AF_INET` results. Switch only between sources: let the item in progress finish, then restart, because stopping mid-item loses an already-paid capture and stopping mid-request latches a hold.
+- **Portal times follow the Mac's time zone,** which can change between runs. Check `date +%z` before matching portal rows to ledger attempts.
+- **A run that another agent left unreconciled blocks the next one.** `init` refuses with `unreconciled_actual_charge` until every earlier attempt has a portal-confirmed charge. Read the signed-in Request log (load older rows until the run's window is covered), match every row by exact source URL and time, and run `reconcile-portal` before starting new work.
+- **Re-slicing a slow note writer:** a stop message reaches a subagent only at its next tool round, so it may finish more items first. Check which notes exist before giving its remaining items to a new writer, and tell the new writer which ones to skip.
