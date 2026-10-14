@@ -8,10 +8,14 @@ This is an agent filing convention, not an unattended sync service.
 | --- | --- |
 | Content creation, storytelling, editing, hooks or production workflows | Add the usable idea, context and source/note links to the content repo's existing intake or workflow. Extend existing experiments rather than create a second editorial queue. |
 | Travel destinations, routes and trip preparation | Keep a discoverable guide to the vault travel hub and relevant notes. Cross-link an existing trip's research when applicable; a saved destination is not a booking or itinerary decision. |
-| Personal investing, stocks/options and relevant wealth research | Use the personal investing repo's source intake and evidence rules. Preserve uncertainty and dates; source filing is not a watchlist addition, completed investment case or trade instruction. |
+| Personal investing, stocks/options and relevant wealth research | Use the personal investing repo's source intake and evidence rules. Add tickers new to its scan universe through the repo's documented user-requested-additions process, with source provenance. Preserve uncertainty and dates; a scan-scope addition is not a watchlist addition, completed investment case or trade instruction. |
 | Health, fitness, training and relevant nutrition | Link the saved research through the health/fitness repo's knowledge guide. Separate general source claims from the user's symptoms, diagnoses, performed sessions and current plan. |
 | Music production techniques and samples | Follow the existing [music handoff](obsidian-filing.md#music-production-handoff); technique references and retained audio are distinct deliverables. |
-| Product/business findings | Keep the existing relevant product backlog owner. A content-production method may also belong in the content repo, without transferring ownership of product claims or campaigns. |
+| Product/business findings | File every idea the product could act on as an entry in that repo's own backlog or task system (its format, its re-open triggers), not only as an intake pointer; the intake pointer stays as the index. Extend the existing owner rather than open a parallel list. A content-production method may also belong in the content repo, without transferring ownership of product claims or campaigns. |
+
+## Every save is the owner's take
+
+A saved source is deliberate. Assume the owner knows their existing efforts: the save is either a new way to approach one of them or a new idea. Find the related effort in the destination repo, file the item beside it and say what the new angle is; never close a save as already covered.
 
 ## Per-source workflow
 
@@ -23,6 +27,9 @@ This is an agent filing convention, not an unattended sync service.
    guide is enough when copying the analysis would add no value.
 3. Search by source ID/URL and topic. Update existing intake, guide or backlog entries;
    multiple relevant repos may link one source, but avoid competing task owners.
+   Beyond the intake pointer, also file the item in the repo's working home when one
+   fits: a destination file, idea folder, technique or exercise list, evidence table,
+   research queue or backlog row, in that file's own format.
 4. Make the guide discoverable from the repo's agent entry point or README. For future
    retrieval, name the actual vault root/hubs and existing repo research owners in
    private destination docs. Keep personal paths and repository mappings out of this
