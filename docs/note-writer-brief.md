@@ -112,7 +112,7 @@ Append one JSON object per item (one line) to the results file named in your tas
 {"key": "…", "status": "written|blocked", "vault_path": "folder/key-slug.md",
  "title": "…", "topics": ["…"], "hub_line": "one sentence for the hub index",
  "projects": [{"repo": "travel|health-fitness|content|wealth|music|benya|hijole",
-               "why": "one sentence: what the project could use"}],
+               "why": "one sentence: the existing effort it extends and the new angle, or that it is a new idea"}],
  "prompt": "…", "coverage": "full | partial: what is missing",
  "flags": ["ticker:XYZ", "music-track", "health-claim", "reminder-asked", …]}
 ```
@@ -122,6 +122,6 @@ Projects: travel = future-trip preparation (places, routes, costs, gear); health
 storytelling, editing, hooks; wealth = personal investing; music = production
 techniques or tracks; benya = Benya, his AI trading/investing app (marketing,
 onboarding, growth, product ideas for a consumer finance app); hijole = Híjole, his
-expense/bookkeeping app for small businesses in Mexico (B2B marketing, ops, product).
+expense/bookkeeping app for small businesses in Honduras (B2B marketing, ops, product).
 List a project only when the source is genuinely useful there; most items have none
 or one.
