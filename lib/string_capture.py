@@ -372,7 +372,8 @@ def main(argv=None) -> int:
     fetch.add_argument("url")
     fetch.add_argument("--run", required=True)
     fetch.add_argument("--recover-attempt", type=int,
-                       help="One reviewed exact-source recovery of a paid request with a lost local response")
+                       help="One reviewed exact-source recovery of a paid request with a lost local response,"
+                            " or the attempt an authorized capture retry repeats")
     fetch.add_argument("--downloads", type=Path, default=downloads_dir())
     fetch.add_argument("--shared-ledger", type=Path,
                        default=Path(load_local_env()["STRING_USAGE_LEDGER"]).expanduser()
@@ -401,6 +402,11 @@ def main(argv=None) -> int:
     authorize_music.add_argument("--run", required=True)
     authorize_music.add_argument("--manifest", type=Path, required=True)
     authorize_music.add_argument("--user-direction", required=True)
+    retry = sub.add_parser("authorize-capture-retry",
+                           help="Offline one-time retry of a reviewed failed media capture, on the user's request")
+    retry.add_argument("--run", required=True)
+    retry.add_argument("--url", required=True)
+    retry.add_argument("--user-direction", required=True)
     music = sub.add_parser("soundtrack-recheck", help="One authorized public music lookup; no photo re-downloads")
     music.add_argument("--run", required=True)
     music.add_argument("--manifest", type=Path, required=True)
@@ -439,6 +445,14 @@ def main(argv=None) -> int:
                 prior, digest = image_only_manifest(args.manifest)
                 result = ledger.authorize_soundtrack_recheck(args.run, prior["attempt_id"],
                             prior["source_url"], digest, args.user_direction)
+            elif args.command == "authorize-capture-retry":
+                canonical, mid = canonical_source(args.url)
+                prior = [a for a in ledger.report()["attempt_records"]
+                         if a["source_id"] == mid and a["recovery_of"] is None]
+                if len(prior) != 1:
+                    raise CaptureStopped("capture_retry_needs_exactly_one_original_attempt")
+                result = ledger.authorize_capture_retry(args.run, prior[0]["attempt_id"], canonical,
+                                                        args.user_direction)
             elif args.command == "soundtrack-recheck":
                 result = soundtrack_recheck(args.manifest, args.run, ledger, args.output_dir,
                                              args.shared_ledger)

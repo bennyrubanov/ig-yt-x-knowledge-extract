@@ -560,3 +560,8 @@ A save whose Notion title is empty or just "Instagram" is not a sign the post is
 - **Portal times follow the Mac's time zone,** which can change between runs. Check `date +%z` before matching portal rows to ledger attempts.
 - **A run that another agent left unreconciled blocks the next one.** `init` refuses with `unreconciled_actual_charge` until every earlier attempt has a portal-confirmed charge. Read the signed-in Request log (load older rows until the run's window is covered), match every row by exact source URL and time, and run `reconcile-portal` before starting new work.
 - **Re-slicing a slow note writer:** a stop message reaches a subagent only at its next tool round, so it may finish more items first. Check which notes exist before giving its remaining items to a new writer, and tell the new writer which ones to skip.
+
+## Journal branch and failed-capture retries (2026-10-15)
+
+- **Create the change journal's branch before marking rows.** The marking step writes each journal entry to a branch through the GitHub API; if the branch does not exist yet, the first write fails with a 404 and no Notion row changes. Create it from the journal repository's main branch, mark, then merge the journal PR and delete the branch.
+- **One retry for a failed capture, only on the user's word.** A paid page fetch that gave no usable media can now be retried once per source through `authorize-capture-retry` ([public capture](public-capture.md#one-user-directed-retry-after-a-failed-media-capture)). Record the user's own words as the direction. An agent safety check may treat adding or using this exception as security-sensitive; it needs the user's explicit yes to the exception itself, not only to the queue run.
