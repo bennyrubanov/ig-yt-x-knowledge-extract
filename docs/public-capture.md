@@ -49,7 +49,7 @@ immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
 media, or fast-spending hold. Do not create a fresh run to silently retry an already
 attempted source or work around a safety hold. The user-directed carousel music
-recheck below is a narrow, separately audited exception.
+recheck and failed-capture retry below are narrow, separately audited exceptions.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -214,7 +214,7 @@ After a successful, portal-reconciled image-only capture, an explicit user reque
 can authorize **one** separate public music lookup. Create a dedicated run with
 `max_requests=1`; its usual per-request reserve, budget, pacing, billing and holds
 remain enforced. This cannot retry a denial, interrupted request, or failed media
-capture, and cannot release a hold. The original attempt and charge remain.
+capture (a failed media capture has its own retry below), and cannot release a hold. The original attempt and charge remain.
 
 ```bash
 python scripts/igx.py public-capture init --run approved-music-check \
@@ -240,6 +240,31 @@ Reconcile its charge in the portal before another run. An MP4 container served a
 `video/mp4` may hold audio alone; local probing, audible activity and full decoding
 still must pass. A separate track/preview is a `music_reference`, not proof of the
 exact synchronized excerpt, rights to sample, or a complete song.
+
+### One user-directed retry after a failed media capture
+
+If the user explicitly asks to retry a source whose paid page fetch succeeded but
+yielded no usable media, an offline authorization can allow **one** more request for
+that exact source. The original attempt must be settled with HTTP 200 and no usable
+media, released through the reviewed media-failure path, and portal-reconciled. Create
+a dedicated run with `max_requests=1`; its reserve, budget, pacing, billing and holds
+stay in force. The authorization records the source URL and the user's own words in
+`capture_retries`, and the retry links its original through `recovery_of`. No second
+retry is permitted, even under another run name, and the retry never releases a hold:
+a new media failure latches the usual hold, released the usual reviewed way.
+
+```bash
+python scripts/igx.py public-capture init --run approved-retry \
+  --max-requests 1 --acknowledge-incident
+python scripts/igx.py public-capture authorize-capture-retry --run approved-retry \
+  --url 'https://www.instagram.com/p/SHORTCODE/' \
+  --user-direction 'Exact user request to retry this post once'
+python scripts/igx.py public-capture fetch 'https://www.instagram.com/p/SHORTCODE/' \
+  --run approved-retry --recover-attempt ORIGINAL_ATTEMPT_ID
+```
+
+Reconcile its charge in the portal before another run. The original failed attempt
+and its charge stay in history.
 
 ## Validate and process locally
 
