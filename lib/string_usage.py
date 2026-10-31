@@ -28,6 +28,11 @@ _TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _HOST = re.compile(r"^[a-z0-9.-]{1,120}$")
 _SOURCE_URL = re.compile(r"^https://www\.instagram\.com/(?:reel|p)/([A-Za-z0-9_-]{1,80})/$")
 _RESUMABLE_HOLDS = frozenset({"provider_wall_time_exceeded"})
+# What String's own refusal of the key latches: no billing class, an error, a 401.
+_UNAUTHENTICATED_HOLDS = frozenset({"provider_denial", "unknown_billing_class", "provider_error"})
+# Each reviewed release covers the holds latched since the previous one, of any kind.
+_REVIEWED_RESUMES = ("reviewed_timeout_resume", "reviewed_media_resume",
+                     "reviewed_unauthenticated_resume")
 MAX_RUN_MICRODOLLARS = 1_000_000
 MAX_REQUEST_MICRODOLLARS = 6_000
 MAX_RUN_REQUESTS = 111
@@ -165,6 +170,10 @@ class Ledger:
                     attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     run_id TEXT NOT NULL, at REAL NOT NULL, billing_class TEXT NOT NULL,
                     actual_micro INTEGER NOT NULL, review_note TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS unauthenticated_retries (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    run_id TEXT NOT NULL, at REAL NOT NULL, review_note TEXT NOT NULL
                 );
             """)
         self._migrate_recovery_schema()
@@ -334,6 +343,8 @@ class Ledger:
             retry = db.execute("SELECT * FROM capture_retries WHERE run_id=?", (run_id,)).fetchone()
             if retry and recovery_of != retry["parent_attempt_id"]:
                 raise UsageBlocked("capture_retry_exact_source_only")
+            dedicated_run = bool(recheck or retry)
+            auth_retry_allowed = False
             if recovery_of is None:
                 if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
                               (source_host, source_id)).fetchone():
@@ -351,9 +362,19 @@ class Ledger:
                                       and recheck["source_url"] == recovery_source_url)
                 retry_allowed = (retry and retry["parent_attempt_id"] == recovery_of
                                  and retry["source_url"] == recovery_source_url)
-                if (not parent or not (lost_response_allowed or soundtrack_allowed or retry_allowed)
+                # A source String refused as unauthenticated was never fetched; the
+                # reviewed release allows it one more request, in any later run.
+                source_match = (_SOURCE_URL.fullmatch(recovery_source_url)
+                                if isinstance(recovery_source_url, str) else None)
+                auth_retry_allowed = bool(
+                    not dedicated_run and parent and source_match and source_match[1] == source_id
+                    and db.execute("SELECT 1 FROM unauthenticated_retries WHERE parent_attempt_id=?",
+                                   (recovery_of,)).fetchone())
+                if (not parent or not (lost_response_allowed or soundtrack_allowed or retry_allowed
+                                       or auth_retry_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
-                        or not parent_source or parent_source[0] != recovery_source_url
+                        or not (auth_retry_allowed
+                                or (parent_source and parent_source[0] == recovery_source_url))
                         or parent["recovery_of"] is not None
                         or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
                     raise UsageBlocked("recovery_not_authorized_or_already_used")
@@ -362,8 +383,12 @@ class Ledger:
                 raise UsageBlocked("minimum_gap", run["min_gap_seconds"] - (now - last))
             rows = db.execute("SELECT * FROM attempts WHERE run_id=?", (run_id,)).fetchall()
             dedicated = recheck or retry
-            original_count = len(rows) if dedicated else sum(row["recovery_of"] is None for row in rows)
-            if (recovery_of is None or dedicated) and original_count >= run["max_requests"]:
+            # A retry of a source String refused as unauthenticated is still one of
+            # the run's planned sources, so it counts toward the request limit.
+            auth_parents = {r[0] for r in db.execute("SELECT parent_attempt_id FROM unauthenticated_retries")}
+            original_count = len(rows) if dedicated else sum(
+                row["recovery_of"] is None or row["recovery_of"] in auth_parents for row in rows)
+            if (recovery_of is None or dedicated or auth_retry_allowed) and original_count >= run["max_requests"]:
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
             if consumed + run["max_request_micro"] > run["budget_micro"]:
@@ -756,8 +781,7 @@ class Ledger:
                 raise UsageBlocked("run_missing_portal_evidence")
             # Never release denial, price, class, media or logging anomalies merely
             # because the first latched reason happened to be a timeout.
-            last_resume = db.execute("SELECT COALESCE(MAX(event_id),0) FROM events "
-                                     "WHERE code='reviewed_timeout_resume'").fetchone()[0]
+            last_resume = self._last_reviewed_resume(db)
             hold_events = [r[0][5:] for r in db.execute(
                 "SELECT code FROM events WHERE event_id>? AND code LIKE 'hold:%'", (last_resume,))]
             if any(reason not in _RESUMABLE_HOLDS for reason in hold_events):
@@ -793,8 +817,7 @@ class Ledger:
             hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
             if hold != "media_capture_or_validation_failed":
                 raise UsageBlocked("hold_not_eligible_for_media_resume:" + str(hold))
-            last_resume = db.execute("SELECT COALESCE(MAX(event_id),0) FROM events WHERE code IN "
-                                     "('reviewed_timeout_resume','reviewed_media_resume')").fetchone()[0]
+            last_resume = self._last_reviewed_resume(db)
             hold_events = [r[0][5:] for r in db.execute(
                 "SELECT code FROM events WHERE event_id>? AND code LIKE 'hold:%'", (last_resume,))]
             if hold_events != ["media_capture_or_validation_failed"]:
@@ -816,6 +839,109 @@ class Ledger:
                        (self._clock(), run_id, "reviewed_media_resume", review_note))
         return self.report(run_id)
 
+    @staticmethod
+    def _last_reviewed_resume(db) -> int:
+        marks = ",".join("?" * len(_REVIEWED_RESUMES))
+        return db.execute(f"SELECT COALESCE(MAX(event_id),0) FROM events WHERE code IN ({marks})",
+                          _REVIEWED_RESUMES).fetchone()[0]
+
+    @staticmethod
+    def _latest_access_check(db, after_event_id: int) -> str | None:
+        row = db.execute("SELECT code FROM events WHERE event_id>? AND code IN "
+                         "('access_check_ok','access_check_failed') ORDER BY event_id DESC LIMIT 1",
+                         (after_event_id,)).fetchone()
+        return row[0] if row else None
+
+    def record_access_check(self, status_code: int | None, billed_request_type: str | None = None,
+                            run_id: str | None = None) -> dict:
+        """Record a free authenticated read that shows whether String accepts the key.
+
+        The check fetches no page and reserves nothing. A failure is only recorded;
+        a billed check is unexpected and latches a hold.
+        """
+        if run_id is not None:
+            run_id = _token(run_id, "run_id")
+        ok = (isinstance(status_code, int) and not isinstance(status_code, bool)
+              and status_code == 200 and not billed_request_type)
+        with self._write() as db:
+            if run_id is not None and not db.execute("SELECT 1 FROM runs WHERE run_id=?",
+                                                     (run_id,)).fetchone():
+                raise ValueError("unknown run")
+            self._event(db, "access_check_ok" if ok else "access_check_failed", run_id)
+            if billed_request_type:
+                self._hold(db, "access_check_billed", run_id)
+        return {"access_ok": ok, "status_code": status_code,
+                "billed_request_type": billed_request_type}
+
+    def access_checked(self, run_id: str) -> bool:
+        """Whether the latest key check since this run was created passed."""
+        run_id = _token(run_id, "run_id")
+        with self._db() as db:
+            created = db.execute("SELECT MIN(event_id) FROM events WHERE run_id=? AND code='run_created'",
+                                 (run_id,)).fetchone()[0]
+            return created is not None and self._latest_access_check(db, created) == "access_check_ok"
+
+    def unauthenticated_retry_for(self, source_id: str, source_host: str = "www.instagram.com") -> int | None:
+        """The original attempt whose released 401 still allows this source one request."""
+        source_id = _token(source_id, "source_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT a.attempt_id FROM attempts a JOIN unauthenticated_retries u "
+                "ON u.parent_attempt_id=a.attempt_id WHERE a.source_host=? AND a.source_id=? "
+                "AND a.recovery_of IS NULL AND NOT EXISTS "
+                "(SELECT 1 FROM attempts r WHERE r.recovery_of=a.attempt_id)",
+                (source_host, source_id)).fetchone()
+        return row[0] if row else None
+
+    def resume_reviewed_unauthenticated(self, run_id: str, review_note: str) -> dict:
+        """Release a hold latched only because String refused the key (HTTP 401).
+
+        String identifies the paying account by the key, so a request it refused as
+        unauthenticated fetched nothing and cannot be charged to the account. Every
+        hold since the last reviewed release must come from such an attempt in this
+        run, and a key check must have passed since. Each refused attempt is recorded
+        at zero in an audit table and its source may be requested once more.
+        """
+        run_id = _token(run_id, "run_id")
+        if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
+                or any(ord(ch) < 32 for ch in review_note)):
+            raise ValueError("review_note must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold not in _UNAUTHENTICATED_HOLDS:
+                raise UsageBlocked("hold_not_eligible_for_unauthenticated_resume:" + str(hold))
+            if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("ledger_has_pending_attempt")
+            holds = db.execute("SELECT event_id,code,attempt_id FROM events "
+                               "WHERE event_id>? AND code LIKE 'hold:%' ORDER BY event_id",
+                               (self._last_reviewed_resume(db),)).fetchall()
+            if not holds:
+                raise UsageBlocked("no_hold_events_to_review")
+            refused = set()
+            for event in holds:
+                if event["code"][5:] not in _UNAUTHENTICATED_HOLDS or event["attempt_id"] is None:
+                    raise UsageBlocked("other_safety_hold_requires_review")
+                row = db.execute("SELECT * FROM attempts WHERE attempt_id=?",
+                                 (event["attempt_id"],)).fetchone()
+                if (not row or row["run_id"] != run_id or row["status_code"] != 401
+                        or row["billing_class"] is not None or row["estimate_micro"] is not None
+                        or row["actual_micro"] is not None or row["usable_media"]):
+                    raise UsageBlocked("hold_not_from_unauthenticated_attempt")
+                refused.add(row["attempt_id"])
+            if self._latest_access_check(db, holds[-1]["event_id"]) != "access_check_ok":
+                raise UsageBlocked("passing_access_check_required_after_failure")
+            for attempt_id in sorted(refused):
+                db.execute("INSERT INTO unauthenticated_retries VALUES(?,?,?,?)",
+                           (attempt_id, run_id, self._clock(), review_note))
+                db.execute("UPDATE attempts SET actual_micro=0,actual_source='unauthenticated' "
+                           "WHERE attempt_id=?", (attempt_id,))
+                self._event(db, "unauthenticated_charge_zero", run_id, attempt_id)
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+            self._event(db, "reviewed_unauthenticated_resume", run_id)
+            db.execute("INSERT INTO reviews(at,run_id,code,note) VALUES(?,?,?,?)",
+                       (self._clock(), run_id, "reviewed_unauthenticated_resume", review_note))
+        return self.report(run_id)
+
     def report(self, run_id: str | None = None) -> dict:
         if run_id is not None:
             _token(run_id, "run_id")
@@ -831,6 +957,7 @@ class Ledger:
             retries = db.execute("SELECT * FROM capture_retries WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM capture_retries ORDER BY at").fetchall()
             recs = db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations WHERE attempt_id IN (SELECT attempt_id FROM attempts WHERE run_id=?) ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations ORDER BY attempt_id").fetchall()
             runs = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM runs ORDER BY created_at").fetchall()
+            auth_retries = db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries ORDER BY at").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
         return {
             "run_id": run_id,
@@ -864,4 +991,5 @@ class Ledger:
             "soundtrack_rechecks": [dict(r) for r in rechecks],
             "capture_retries": [dict(r) for r in retries],
             "reconciliations": [dict(r) for r in recs],
+            "unauthenticated_retries": [dict(r) for r in auth_retries],
         }

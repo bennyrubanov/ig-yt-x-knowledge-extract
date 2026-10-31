@@ -15,8 +15,26 @@ and permanent music audio still use the existing workflow.
 String credentials come from `STRING_AI_API_KEY` or the existing macOS Keychain
 generic password service `string-ai`. Never paste a key into CLI arguments,
 logs or Git. Only the fixed `https://request.usestring.ai/v1/fetch` endpoint
-receives the String key. Instagram receives no user account credentials.
+and the free key check (`/v1/sitemap`, read only) receive the String key. Instagram receives no user account credentials.
 The credential must already exist; these commands create no account or key.
+
+**A cloud machine whose network proxy adds the key.** Set
+`STRING_AI_API_KEY=proxy-injected`. Calls to String's API then go through
+`HTTPS_PROXY`, which replaces the placeholder with the real key; otherwise they go
+direct, and the proxy never sees them. With any other placeholder, String answers 401.
+Instagram CDN downloads never use a proxy in either mode, and String fetches the page
+from its own network, so the mode changes nothing Instagram sees. In this mode `fetch`
+refuses to reserve anything until a key check has passed since the run was created:
+
+```bash
+python scripts/igx.py public-capture init --run approved-queue-run \
+  --max-requests 30 --acknowledge-incident
+python scripts/igx.py public-capture check-access --run approved-queue-run
+```
+
+`check-access` is one free authenticated read (String's crawl-job list, which bills no
+request type). It reserves nothing and exits 3 if String refuses the key. A failed check
+is only recorded; a check that comes back billed latches a hold.
 
 ```bash
 # Fresh bounded run; the budget is calculated from --max-requests.
@@ -154,6 +172,28 @@ attempt that was denied, errored or has no reported class; those runs still need
 review. Each settled attempt keeps `actual_source: price_list` and an audit row. A later
 `reconcile-portal` with the real portal rows replaces the list price with the real
 charge. Reconcile against the portal regularly (monthly) on a machine that can open it.
+
+### Reviewed release after String refused the key
+
+If a fetch went out without a working key (for example a cloud run whose code skipped
+the key-adding proxy, 2026-10-31), String answers HTTP 401 with no billing class and the
+ledger latches `provider_denial`. String identifies the paying account by the key, so a
+request it refused as unauthenticated fetched nothing and can't have been charged.
+Fix the key, then:
+
+```bash
+python scripts/igx.py public-capture check-access
+python scripts/igx.py public-capture resume-reviewed-unauthenticated \
+  --run approved-queue-run --review-note 'String refused the placeholder key; nothing fetched'
+```
+
+It refuses, and changes nothing, unless every hold since the last reviewed release came
+from an attempt in that run with status 401, no billing class and no charge, nothing is
+pending, and the latest key check since the failure passed. Each refused attempt is
+recorded at $0 (`actual_source: unauthenticated`, audit row in
+`unauthenticated_retries`), and its source may be requested **once** more in a later
+run: `fetch` finds the allowance itself and links the new attempt with `recovery_of`. That
+request counts toward its run's request limit.
 
 ### One reviewed recovery when a paid response was lost locally
 
