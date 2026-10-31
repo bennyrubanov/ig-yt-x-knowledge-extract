@@ -12,7 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from string_capture import CaptureStopped, capture, fetch_page, bounded_fetch_page, process_local, main, soundtrack_recheck
+from string_capture import (CaptureStopped, api_key, capture, check_access, fetch_page, bounded_fetch_page,
+                            process_local, main, soundtrack_recheck)
 from string_usage import Ledger, UsageBlocked
 
 
@@ -269,6 +270,68 @@ class CaptureTests(unittest.TestCase):
         with self.assertRaises(UsageBlocked):
             self.ledger.reserve("run", "Lost123", recovery_of=parent,
                                 recovery_source_url="https://www.instagram.com/reel/Lost123/")
+
+
+    def test_proxy_injected_key_sends_only_string_api_calls_through_https_proxy(self):
+        env = {"STRING_AI_API_KEY": "proxy-injected", "HTTPS_PROXY": "http://127.0.0.1:9"}
+        with patch.dict("os.environ", env, clear=True):
+            key = api_key()
+            for call in (lambda: fetch_page("https://www.instagram.com/reel/Test123/", key),
+                         lambda: check_access(key)):
+                with patch("string_capture.urllib.request.build_opener") as make:
+                    make.return_value.open.return_value = Response(
+                        json.dumps({"statusCode": 200, "data": "html"}).encode())
+                    call()
+                    handler = make.call_args.args[0]
+                self.assertEqual(handler.proxies, {"https": "http://127.0.0.1:9"})
+        with patch.dict("os.environ", {"STRING_AI_API_KEY": "real-key", "HTTPS_PROXY": "http://127.0.0.1:9"},
+                        clear=True), patch("string_capture.urllib.request.build_opener") as make:
+            make.return_value.open.return_value = Response(json.dumps({"statusCode": 200, "data": "html"}).encode())
+            fetch_page("https://www.instagram.com/reel/Test123/", api_key())
+            self.assertEqual(make.call_args.args[0].proxies, {})
+        with patch.dict("os.environ", {"STRING_AI_API_KEY": "proxy-injected"}, clear=True):
+            with self.assertRaisesRegex(CaptureStopped, "needs_https_proxy"):
+                api_key()
+
+    def test_proxy_injected_capture_needs_a_passing_check_before_reserving(self):
+        with patch("string_capture.api_key", return_value="proxy-injected"), \
+                patch("string_capture.bounded_fetch_page") as fetch:
+            with self.assertRaisesRegex(CaptureStopped, "string_access_check_required"):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+            self.ledger.record_access_check(401, run_id="run")
+            with self.assertRaisesRegex(CaptureStopped, "string_access_check_required"):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+            fetch.assert_not_called()
+        self.assertEqual(self.ledger.report()["attempt_count"], 0)
+
+    def test_check_access_command_records_the_result_without_reserving(self):
+        for status, code in ((401, 3), (200, 0)):
+            output = io.StringIO()
+            with patch("string_capture.api_key", return_value="proxy-injected"), \
+                    patch("string_capture.check_access", return_value={"status_code": status}), \
+                    redirect_stdout(output):
+                self.assertEqual(main(["--ledger", str(self.root / "usage.sqlite"), "check-access",
+                                       "--run", "run"]), code)
+        self.assertTrue(self.ledger.access_checked("run"))
+        self.assertEqual(self.ledger.report()["attempt_count"], 0)
+
+    def test_capture_retries_a_source_string_refused_as_unauthenticated_once(self):
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page",
+                return_value={"status_code": 401, "error": "provider_http_error"}):
+            with self.assertRaises(CaptureStopped):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+        self.ledger.record_access_check(200)
+        self.ledger.resume_reviewed_unauthenticated("run", "String refused the placeholder key")
+        self.ledger.create_run("next", ".10", min_gap_seconds=0)
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page",
+                return_value={"status_code": 403, "error": "provider_http_error"}) as fetch:
+            with self.assertRaises(CaptureStopped):
+                capture("https://www.instagram.com/reel/Test123/", "next", self.ledger, self.root)
+        fetch.assert_called_once()
+        records = self.ledger.report("next")["attempt_records"]
+        self.assertEqual(records[0]["recovery_of"], 1)
 
 
 if __name__ == "__main__":

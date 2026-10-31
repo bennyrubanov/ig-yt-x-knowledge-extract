@@ -266,6 +266,90 @@ class StringUsageTests(unittest.TestCase):
         self.assertEqual(report["attempt_records"][0]["actual_source"], "portal_reconciled")
         self.assertEqual(report["reconciliations"][0]["prior_actual_micro"], 3000)
 
+    def unauthenticated_hold(self):
+        self.run_with(min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(attempt, 401, None, error="provider_http_error")
+        self.assertEqual(self.ledger.report()["hold_reason"], "provider_denial")
+        return attempt
+
+    def test_unauthenticated_release_needs_a_passing_check_and_allows_one_retry(self):
+        attempt = self.unauthenticated_hold()
+        note = "String refused the placeholder key; nothing fetched"
+        with self.assertRaisesRegex(UsageBlocked, "passing_access_check_required"):
+            self.ledger.resume_reviewed_unauthenticated("queue1", note)
+        self.ledger.record_access_check(200)
+        self.ledger.record_access_check(401)
+        with self.assertRaisesRegex(UsageBlocked, "passing_access_check_required"):
+            self.ledger.resume_reviewed_unauthenticated("queue1", note)
+        self.ledger.record_access_check(200)
+        report = self.ledger.resume_reviewed_unauthenticated("queue1", note)
+        self.assertIsNone(report["hold_reason"])
+        record = report["attempt_records"][0]
+        self.assertEqual((record["actual_micro"], record["actual_source"]), (0, "unauthenticated"))
+        self.assertEqual(report["unauthenticated_retries"][0]["parent_attempt_id"], attempt)
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+        self.assertEqual(self.ledger.unauthenticated_retry_for("abc123"), attempt)
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue2", "abc123")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                recovery_source_url="https://www.instagram.com/reel/other1/")
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                    recovery_source_url="https://www.instagram.com/reel/abc123/")
+        self.ledger.complete(retry, 200, "request_premium")
+        self.assertIsNone(self.ledger.unauthenticated_retry_for("abc123"))
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                recovery_source_url="https://www.instagram.com/reel/abc123/")
+
+    def test_unauthenticated_retry_counts_toward_the_request_limit(self):
+        attempt = self.unauthenticated_hold()
+        self.ledger.record_access_check(200)
+        self.ledger.resume_reviewed_unauthenticated("queue1", "String refused the placeholder key")
+        self.ledger.create_run("queue2", "0.03", max_requests=1, min_gap_seconds=0)
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                    recovery_source_url="https://www.instagram.com/reel/abc123/")
+        self.ledger.complete(retry, 200, "request_premium")
+        with self.assertRaisesRegex(UsageBlocked, "request_limit"):
+            self.ledger.reserve("queue2", "def456")
+
+    def test_unauthenticated_release_refuses_every_other_failure(self):
+        self.run_with(min_gap_seconds=0)
+        self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 403, None,
+                             error="provider_http_error")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "hold_not_from_unauthenticated_attempt"):
+            self.ledger.resume_reviewed_unauthenticated("queue1", "Reviewed a forbidden answer")
+        self.assertEqual(self.ledger.report()["hold_reason"], "provider_denial")
+
+    def test_unauthenticated_release_refuses_a_billed_401_or_a_second_hold_kind(self):
+        self.run_with(min_gap_seconds=0)
+        self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 401, "request_premium",
+                             error="provider_http_error")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "hold_not_from_unauthenticated_attempt"):
+            self.ledger.resume_reviewed_unauthenticated("queue1", "Reviewed a billed refusal")
+        other = Ledger(self.path.parent / "other.sqlite3")
+        other.create_run("queue1", "0.03", min_gap_seconds=0)
+        other.complete(other.reserve("queue1", "abc123"), 401, None, error="provider_http_error")
+        other.hold("shared_usage_log_failed")
+        other.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "other_safety_hold_requires_review"):
+            other.resume_reviewed_unauthenticated("queue1", "Reviewed refusal and a log failure")
+
+    def test_access_checks_are_free_reads_and_a_charge_latches_a_hold(self):
+        self.run_with()
+        self.assertFalse(self.ledger.access_checked("queue1"))
+        self.assertFalse(self.ledger.record_access_check(401, run_id="queue1")["access_ok"])
+        self.assertFalse(self.ledger.access_checked("queue1"))
+        self.assertIsNone(self.ledger.report()["hold_reason"])
+        self.assertTrue(self.ledger.record_access_check(200, run_id="queue1")["access_ok"])
+        self.assertTrue(self.ledger.access_checked("queue1"))
+        self.assertFalse(self.ledger.record_access_check(200, "request_standard")["access_ok"])
+        self.assertEqual(self.ledger.report()["hold_reason"], "access_check_billed")
+        self.assertFalse(self.ledger.access_checked("queue1"))
+
     def portal_evidence(self, sources, *, total=None):
         rows = [{"source_id": source, "url": f"https://www.instagram.com/reel/{source}/",
                  "time_local": datetime.fromtimestamp(self.now[0], timezone.utc).isoformat(),

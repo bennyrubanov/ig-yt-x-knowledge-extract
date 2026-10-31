@@ -22,6 +22,11 @@ from string_media import MediaError, canonical_source, download_asset, extract_m
 from string_usage import Ledger, UsageBlocked, recommended_run_budget_usd
 
 API_URL = "https://request.usestring.ai/v1/fetch"
+# A free authenticated read (the account's crawl-job list): String bills no
+# request type for it, and only its status code is kept.
+ACCESS_CHECK_URL = "https://request.usestring.ai/v1/sitemap"
+# STRING_AI_API_KEY value for a cloud machine whose HTTPS proxy adds the real key.
+PROXY_INJECTED_KEY = "proxy-injected"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 PROVIDER_DEADLINE_SECONDS = 120
 
@@ -35,10 +40,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def https_proxy() -> str | None:
+    value = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "").strip()
+    return value or None
+
+
 def api_key() -> str:
     key = os.environ.get("STRING_AI_API_KEY", "").strip()
-    if key == "proxy-injected":
-        raise CaptureStopped("proxy_injected_credentials_not_supported")
+    if key == PROXY_INJECTED_KEY:
+        if not https_proxy():
+            raise CaptureStopped("proxy_injected_key_needs_https_proxy")
+        return key
     if not key and sys.platform == "darwin":
         try:
             result = subprocess.run(
@@ -56,6 +68,38 @@ def api_key() -> str:
     return key
 
 
+def string_opener(key: str):
+    """Open String's API directly, or through HTTPS_PROXY when that proxy adds the key.
+
+    Only calls to String's own API ever use a proxy, and only in proxy-injected
+    mode (a cloud machine whose egress proxy holds the key). Instagram CDN
+    downloads never use one. String fetches the page from its own network either
+    way, so this changes nothing Instagram sees.
+    """
+    proxy = https_proxy() if key == PROXY_INJECTED_KEY else None
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({"https": proxy} if proxy else {}), NoRedirect())
+
+
+def check_access(key: str) -> dict:
+    """One free authenticated read to confirm String accepts the key; no page fetch."""
+    req = urllib.request.Request(ACCESS_CHECK_URL, method="GET",
+        headers={"Authorization": "Bearer " + key, "Accept": "application/json",
+                 "Accept-Encoding": "identity"})
+    try:
+        response = string_opener(key).open(req, timeout=30)
+    except urllib.error.HTTPError as exc:
+        try:
+            return {"status_code": exc.code, "billed_request_type": exc.headers.get("x-billed-request-type")}
+        finally:
+            exc.close()
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return {"status_code": 0, "error": "provider_transport_error"}
+    with response:
+        return {"status_code": response.status,
+                "billed_request_type": response.headers.get("x-billed-request-type")}
+
+
 def fetch_page(url: str, key: str) -> dict:
     """One fixed-endpoint REST call. Return only whitelisted billing headers."""
     canonical, _ = canonical_source(url)
@@ -64,9 +108,8 @@ def fetch_page(url: str, key: str) -> dict:
     req = urllib.request.Request(API_URL, data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
                  "Accept": "application/json", "Accept-Encoding": "identity"})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
-        response = opener.open(req, timeout=120)
+        response = string_opener(key).open(req, timeout=120)
     except urllib.error.HTTPError as exc:
         # Do not echo provider bodies, request URLs or authorization values.
         try:
@@ -198,6 +241,8 @@ def soundtrack_recheck(manifest_path: Path, run: str, ledger: Ledger,
                and a["source_url"] == canonical for a in allowances):
         raise CaptureStopped("soundtrack_recheck_not_authorized_for_manifest")
     key = api_key()
+    if key == PROXY_INJECTED_KEY and not ledger.access_checked(run):
+        raise CaptureStopped("string_access_check_required")
     attempt = ledger.reserve(run, mid, recovery_of=parent, recovery_source_url=canonical)
     try:
         receipt = bounded_fetch_page(canonical, key)
@@ -254,6 +299,10 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         return {"cached": True, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
                 "usage": ledger.report(run)}
     key = api_key()  # Missing credentials must not consume a reservation.
+    if key == PROXY_INJECTED_KEY and not ledger.access_checked(run):
+        raise CaptureStopped("string_access_check_required")
+    if recovery_of is None:
+        recovery_of = ledger.unauthenticated_retry_for(mid)
     attempt = ledger.reserve(run, mid, recovery_of=recovery_of,
                              recovery_source_url=canonical if recovery_of is not None else None)
     try:
@@ -378,6 +427,9 @@ def main(argv=None) -> int:
     fetch.add_argument("--shared-ledger", type=Path,
                        default=Path(load_local_env()["STRING_USAGE_LEDGER"]).expanduser()
                        if load_local_env().get("STRING_USAGE_LEDGER") else None)
+    access = sub.add_parser("check-access",
+                            help="One free authenticated read to confirm String accepts the key; no page fetch")
+    access.add_argument("--run", help="The run this check is for (fetches in proxy-injected mode need one)")
     report = sub.add_parser("usage", help="Read durable usage and any hold")
     report.add_argument("--run")
     reconcile = sub.add_parser("reconcile-portal", help="Offline, audited portal charge reconciliation; does not resume")
@@ -391,6 +443,10 @@ def main(argv=None) -> int:
     resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
     resume.add_argument("--run", required=True)
     resume.add_argument("--review-note", required=True)
+    auth_resume = sub.add_parser("resume-reviewed-unauthenticated",
+                                 help="Release a hold from String refusing the key (HTTP 401), after a passing check-access")
+    auth_resume.add_argument("--run", required=True)
+    auth_resume.add_argument("--review-note", required=True)
     media_resume = sub.add_parser("resume-reviewed-media-failure",
                                   help="Release one reviewed media-validation hold (at most two per run)")
     media_resume.add_argument("--run", required=True)
@@ -436,6 +492,16 @@ def main(argv=None) -> int:
                 result = ledger.report(args.run)
             elif args.command == "usage":
                 result = ledger.report(args.run)
+            elif args.command == "check-access":
+                receipt = check_access(api_key())
+                result = ledger.record_access_check(receipt["status_code"],
+                                                    receipt.get("billed_request_type"), args.run)
+                if not result["access_ok"]:
+                    print(json.dumps({"stopped": True, "reason": "string_rejected_access_check",
+                                      **result}, indent=2))
+                    return 3
+            elif args.command == "resume-reviewed-unauthenticated":
+                result = ledger.resume_reviewed_unauthenticated(args.run, args.review_note)
             elif args.command == "reconcile-portal":
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
             elif args.command == "settle-from-price-list":
