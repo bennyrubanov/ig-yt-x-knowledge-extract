@@ -227,6 +227,45 @@ class StringUsageTests(unittest.TestCase):
         self.ledger.mark_filed(attempt, note)
         self.assertEqual(self.ledger.report()["filed_count"], 1)
 
+    def test_price_list_settlement_releases_only_a_clean_run(self):
+        self.run_with(min_gap_seconds=0)
+        for source in ("abc123", "def456"):
+            self.ledger.complete(self.ledger.reserve("queue1", source), 200, "request_premium")
+        report = self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.assertEqual(report["known_actual_micro"], 6000)
+        self.assertEqual(report["unknown_actual_count"], 0)
+        self.assertEqual({r["actual_source"] for r in report["attempt_records"]}, {"price_list"})
+        self.ledger.create_run("queue2", "0.05", max_requests=1)
+
+    def test_price_list_settlement_refuses_pending_holds_and_unknown_classes(self):
+        self.run_with(min_gap_seconds=0)
+        first = self.ledger.reserve("queue1", "abc123")
+        self.ledger.complete(first, 200, "request_premium")
+        self.ledger.reserve("queue1", "def456")
+        with self.assertRaisesRegex(UsageBlocked, "pending_attempt"):
+            self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.assertIsNone(self.ledger.report("queue1")["attempt_records"][0]["actual_micro"])
+        self.setUp()
+        self.run_with(min_gap_seconds=0)
+        self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 200, billed_request_type=None)
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.create_run("queue2", "0.05", max_requests=1)
+
+    def test_portal_reconciliation_replaces_a_price_list_charge(self):
+        self.run_with(min_gap_seconds=0)
+        self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 200, "request_premium")
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        path = self.portal_evidence(["abc123"], total="0.0024")
+        data = json.loads(path.read_text())
+        data["rows"][0]["actual_usd"] = "0.0024"
+        path.write_text(json.dumps(data))
+        report = self.ledger.reconcile_portal("queue1", path, "Monthly portal check of cloud runs")
+        self.assertEqual(report["known_actual_micro"], 2400)
+        self.assertEqual(report["attempt_records"][0]["actual_source"], "portal_reconciled")
+        self.assertEqual(report["reconciliations"][0]["prior_actual_micro"], 3000)
+
     def portal_evidence(self, sources, *, total=None):
         rows = [{"source_id": source, "url": f"https://www.instagram.com/reel/{source}/",
                  "time_local": datetime.fromtimestamp(self.now[0], timezone.utc).isoformat(),

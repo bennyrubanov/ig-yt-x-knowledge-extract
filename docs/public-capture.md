@@ -138,6 +138,23 @@ requests only; do not append a reconciliation as another request or infer a
 charge from its original billing class. Reconcile that mirror separately with
 an audited correction to the original request records.
 
+### Price-list settlement where the portal can't be opened
+
+A cloud machine can't sign in to String's portal, so `init` would refuse every run after
+the first. For a run that finished cleanly, the owner-approved stand-in records each
+attempt's charge at the published Starter price of the billing class String reported:
+
+```bash
+python scripts/igx.py public-capture settle-from-price-list \
+  --run approved-queue-run --review-note 'Cloud run settled at list price'
+```
+
+It refuses, and changes nothing, if there is any hold, any pending reservation, or any
+attempt that was denied, errored or has no reported class; those runs still need portal
+review. Each settled attempt keeps `actual_source: price_list` and an audit row. A later
+`reconcile-portal` with the real portal rows replaces the list price with the real
+charge. Reconcile against the portal regularly (monthly) on a machine that can open it.
+
 ### One reviewed recovery when a paid response was lost locally
 
 Only after the original interrupted attempt is portal-reconciled and its
