@@ -161,6 +161,11 @@ class Ledger:
                     run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id), at REAL NOT NULL,
                     source_url TEXT NOT NULL, user_direction TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS price_list_settlements (
+                    attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    run_id TEXT NOT NULL, at REAL NOT NULL, billing_class TEXT NOT NULL,
+                    actual_micro INTEGER NOT NULL, review_note TEXT NOT NULL
+                );
             """)
         self._migrate_recovery_schema()
         if self.path.exists():
@@ -663,7 +668,9 @@ class Ledger:
                     raise ValueError("unexpected source host")
                 if abs(portal_at - row["reserved_at"]) > 15 * 60:
                     raise ValueError("portal time does not match reservation")
-                if row["actual_micro"] is not None and row["actual_micro"] != actual:
+                # A price-list settlement is a stand-in that the portal replaces.
+                if (row["actual_micro"] is not None and row["actual_micro"] != actual
+                        and row["actual_source"] != "price_list"):
                     raise ValueError("portal charge conflicts with existing actual")
                 if actual > row["reserve_micro"]:
                     raise ValueError("portal charge exceeds reservation")
@@ -686,6 +693,46 @@ class Ledger:
                            "actual_micro=?,actual_source='portal_reconciled' WHERE attempt_id=?",
                            (self._clock(), actual, row["attempt_id"]))
                 self._event(db, "portal_reconciled", run_id, row["attempt_id"])
+        return self.report(run_id)
+
+    def settle_from_price_list(self, run_id: str, review_note: str) -> dict:
+        """Record the listed price as the charge for every clean attempt in a run.
+
+        For machines that cannot open String's signed-in portal (cloud runs; the
+        owner chose this on 2026-10-31). Only a run with no hold, no pending
+        reservation and only successful attempts of a provider-reported billing
+        class qualifies; anything else stays unreconciled and blocks the next run
+        as before. The amount is the published Starter price of the reported class,
+        kept in an append-only audit table, and a later portal reconciliation
+        replaces it.
+        """
+        run_id = _token(run_id, "run_id")
+        if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
+                or any(ord(ch) < 32 for ch in review_note)):
+            raise ValueError("review_note must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold:
+                raise UsageBlocked("global_hold_requires_review:" + str(hold))
+            attempts = db.execute("SELECT * FROM attempts WHERE run_id=? ORDER BY attempt_id",
+                                  (run_id,)).fetchall()
+            if not attempts:
+                raise ValueError("run has no attempts")
+            unsettled = [row for row in attempts if row["actual_micro"] is None]
+            for row in unsettled:
+                if row["settled_at"] is None:
+                    raise UsageBlocked("pending_attempt_requires_reconciliation")
+                if (row["status_code"] is None or not 200 <= row["status_code"] < 300
+                        or row["error_code"] or row["billing_class"] not in STARTER_MICRODOLLARS
+                        or row["estimate_micro"] != STARTER_MICRODOLLARS[row["billing_class"]]):
+                    raise UsageBlocked("attempt_not_eligible_for_price_list")
+            for row in unsettled:
+                db.execute("INSERT INTO price_list_settlements VALUES(?,?,?,?,?,?)",
+                           (row["attempt_id"], run_id, self._clock(), row["billing_class"],
+                            row["estimate_micro"], review_note))
+                db.execute("UPDATE attempts SET actual_micro=?,actual_source='price_list' "
+                           "WHERE attempt_id=?", (row["estimate_micro"], row["attempt_id"]))
+                self._event(db, "price_list_settled", run_id, row["attempt_id"])
         return self.report(run_id)
 
     def resume_reviewed_timeout(self, run_id: str, review_note: str) -> dict:

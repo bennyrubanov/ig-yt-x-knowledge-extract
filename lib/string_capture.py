@@ -384,6 +384,10 @@ def main(argv=None) -> int:
     reconcile.add_argument("--run", required=True)
     reconcile.add_argument("--evidence", type=Path, required=True)
     reconcile.add_argument("--review-note", required=True)
+    price_list = sub.add_parser("settle-from-price-list",
+                                help="Offline: record listed prices for a clean run when the portal is unreachable")
+    price_list.add_argument("--run", required=True)
+    price_list.add_argument("--review-note", required=True)
     resume = sub.add_parser("resume-reviewed-timeout", help="Release only a fully reconciled timeout hold")
     resume.add_argument("--run", required=True)
     resume.add_argument("--review-note", required=True)
@@ -434,6 +438,8 @@ def main(argv=None) -> int:
                 result = ledger.report(args.run)
             elif args.command == "reconcile-portal":
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
+            elif args.command == "settle-from-price-list":
+                result = ledger.settle_from_price_list(args.run, args.review_note)
             elif args.command == "resume-reviewed-timeout":
                 result = ledger.resume_reviewed_timeout(args.run, args.review_note)
             elif args.command == "resume-reviewed-media-failure":
