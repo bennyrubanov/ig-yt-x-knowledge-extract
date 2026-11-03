@@ -338,6 +338,201 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageBlocked, "other_safety_hold_requires_review"):
             other.resume_reviewed_unauthenticated("queue1", "Reviewed refusal and a log failure")
 
+    NOTE = "String timed out; marked fail, never refetched"
+
+    def failed_fetch(self, run, source, status=0, billed=None, error="provider_deadline_exceeded"):
+        attempt = self.ledger.reserve(run, source)
+        self.ledger.complete(attempt, status, billed, error=error)
+        return attempt
+
+    def good_fetch(self, run, source):
+        attempt = self.ledger.reserve(run, source)
+        self.ledger.complete(attempt, 200, "request_premium")
+        self.ledger.mark_media(attempt)
+        return attempt
+
+    def test_unattended_release_carries_a_run_past_a_timeout(self):
+        self.run_with(budget="0.1", min_gap_seconds=0, burn_limit_usd="1")
+        failed = self.failed_fetch("queue1", "abc123")
+        report = self.ledger.report()
+        self.assertEqual((report["hold_reason"], report["hold_run_id"]), ("provider_denial", "queue1"))
+        with self.assertRaisesRegex(UsageBlocked, "passing_access_check_required"):
+            self.ledger.resume_unattended("queue1", self.NOTE)
+        self.ledger.record_access_check(503, run_id="queue1")
+        with self.assertRaisesRegex(UsageBlocked, "passing_access_check_required"):
+            self.ledger.resume_unattended("queue1", self.NOTE)
+        self.ledger.record_access_check(200, run_id="queue1")
+        report = self.ledger.resume_unattended("queue1", self.NOTE)
+        self.assertIsNone(report["hold_reason"])
+        record = report["attempt_records"][0]
+        self.assertEqual((record["attempt_id"], record["actual_micro"], record["actual_source"]),
+                         (failed, 6000, "unattended_max"))
+        self.assertEqual(report["reviews"][-1]["code"], "unattended_resume")
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue1", "abc123")
+        self.good_fetch("queue1", "def456")
+        report = self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.assertEqual(report["known_actual_micro"], 9000)
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+
+    def test_unattended_release_settles_a_crash_mid_fetch(self):
+        self.run_with(budget="0.1", min_gap_seconds=0)
+        self.ledger.reserve("queue1", "abc123")
+        self.ledger.hold("provider_unexpected_failure")
+        self.assertEqual(self.ledger.report()["hold_run_id"], "queue1")
+        self.ledger.record_access_check(200)
+        report = self.ledger.resume_unattended("queue1", "Fetch worker crashed; marked fail")
+        record = report["attempt_records"][0]
+        self.assertFalse(record["pending"])
+        self.assertEqual((record["actual_micro"], record["actual_source"]), (6000, "unattended_max"))
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+
+    def test_unattended_release_covers_billed_failures_and_dead_posts(self):
+        self.run_with(budget="0.1", min_gap_seconds=0, burn_limit_usd="1")
+        self.failed_fetch("queue1", "abc123", status=404, billed="request_premium",
+                          error="origin_access_error")
+        self.ledger.record_access_check(200)
+        self.ledger.resume_unattended("queue1", "Instagram answered 404; marked fail")
+        self.good_fetch("queue1", "def456")
+        dead = self.ledger.reserve("queue1", "ghi789")
+        self.ledger.complete(dead, 200, "request_premium")
+        self.ledger.hold("media_capture_or_validation_failed")
+        self.assertEqual(self.ledger.report()["hold_run_id"], "queue1")
+        self.ledger.record_access_check(200)
+        report = self.ledger.resume_unattended("queue1", "Post deleted; marked fail, never refetched")
+        self.assertIsNone(report["hold_reason"])
+        by_source = {r["source_id"]: r for r in report["attempt_records"]}
+        self.assertEqual(by_source["abc123"]["actual_micro"], 6000)
+        self.assertIsNone(by_source["ghi789"]["actual_micro"])
+        report = self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.assertEqual(report["known_actual_micro"], 12000)
+
+    def test_unattended_release_stops_at_the_third_failure_in_a_row(self):
+        self.run_with(budget="0.2", min_gap_seconds=0, burn_limit_usd="1")
+        for n, source in enumerate(("aaa111", "bbb222")):
+            self.failed_fetch("queue1", source)
+            self.ledger.record_access_check(200)
+            self.ledger.resume_unattended("queue1", self.NOTE)
+        self.good_fetch("queue1", "ccc333")
+        for source in ("ddd444", "eee555"):
+            self.failed_fetch("queue1", source, status=503, error="provider_http_error")
+            self.ledger.record_access_check(200)
+            self.ledger.resume_unattended("queue1", "String was busy; marked fail")
+        self.failed_fetch("queue1", "fff666")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "failures_in_a_row_limit_reached"):
+            self.ledger.resume_unattended("queue1", self.NOTE)
+        self.assertEqual(self.ledger.report()["hold_reason"], "provider_denial")
+        # The next night restarts once, after a fresh key check.
+        self.now[0] += 6 * 3600
+        with self.assertRaisesRegex(UsageBlocked, "passing_access_check_required"):
+            self.ledger.resume_unattended("queue1", "Next night restart after three timeouts")
+        self.ledger.record_access_check(200)
+        report = self.ledger.resume_unattended("queue1", "Next night restart after three timeouts")
+        self.assertEqual(report["reviews"][-1]["code"], "unattended_restart")
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        # The restart's first request is a probe: one more failure stops the night again.
+        self.ledger.create_run("queue2", "0.1", min_gap_seconds=0, burn_limit_usd="1")
+        self.ledger.record_access_check(200, run_id="queue2")
+        self.failed_fetch("queue2", "ggg777")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "failures_in_a_row_limit_reached"):
+            self.ledger.resume_unattended("queue2", self.NOTE)
+        self.now[0] += 6 * 3600
+        self.ledger.record_access_check(200)
+        self.ledger.resume_unattended("queue2", "Next night restart after the probe failed")
+        self.good_fetch("queue2", "hhh888")
+        self.failed_fetch("queue2", "iii999")
+        self.ledger.record_access_check(200)
+        self.ledger.resume_unattended("queue2", self.NOTE)
+
+    def test_unattended_release_is_capped_per_run(self):
+        self.run_with(budget="0.3", max_requests=30, min_gap_seconds=0, burn_limit_usd="1")
+        for n in range(9):
+            self.good_fetch("queue1", f"good{n}")
+            self.failed_fetch("queue1", f"fail{n}")
+            self.ledger.record_access_check(200)
+            if n < 8:
+                self.ledger.resume_unattended("queue1", self.NOTE)
+        with self.assertRaisesRegex(UsageBlocked, "run_unattended_resume_limit_reached"):
+            self.ledger.resume_unattended("queue1", self.NOTE)
+
+    def test_unattended_release_waits_out_the_burn_window(self):
+        self.run_with(budget="1", min_gap_seconds=0, burn_limit_usd="0.006")
+        self.good_fetch("queue1", "abc123")
+        with self.assertRaisesRegex(UsageBlocked, "burn_limit"):
+            self.ledger.reserve("queue1", "def456")
+        self.assertEqual(self.ledger.report()["hold_run_id"], "queue1")
+        self.ledger.record_access_check(200)
+        with self.assertRaises(UsageBlocked) as early:
+            self.ledger.resume_unattended("queue1", "Fast-spending window passed")
+        self.assertEqual(early.exception.reason, "burn_window_still_open")
+        self.assertEqual(early.exception.wait_seconds, 60)
+        self.now[0] += 61
+        self.ledger.resume_unattended("queue1", "Fast-spending window passed")
+        self.assertIsInstance(self.ledger.reserve("queue1", "def456"), int)
+
+    def test_unattended_release_waits_a_night_for_a_string_refusal(self):
+        self.run_with(budget="0.1", min_gap_seconds=0)
+        self.failed_fetch("queue1", "abc123", status=403, error="provider_http_error")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "string_refused_the_request_restart_next_night"):
+            self.ledger.resume_unattended("queue1", "String refused the fetch")
+        self.now[0] += 6 * 3600 - 1
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "string_refused_the_request_restart_next_night"):
+            self.ledger.resume_unattended("queue1", "String refused the fetch")
+        self.now[0] += 1
+        report = self.ledger.resume_unattended("queue1", "Restarting the night after a 403")
+        self.assertEqual(report["reviews"][-1]["code"], "unattended_restart")
+        self.assertEqual(report["attempt_records"][0]["actual_source"], "unattended_max")
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+
+    def test_unattended_release_never_clears_a_billing_anomaly_or_a_refused_key(self):
+        cases = {
+            "billing_anomaly_requires_review": lambda l: l.complete(l.reserve("queue1", "abc123"), 200, None),
+            "refused_key_use_resume_reviewed_unauthenticated":
+                lambda l: l.complete(l.reserve("queue1", "abc123"), 401, None, error="provider_http_error"),
+            "hold_not_eligible_for_unattended_resume:rate_jump": lambda l: (
+                l.complete(l.reserve("queue1", "abc123"), 200, "request_standard"),
+                l.complete(l.reserve("queue1", "def456"), 200, "request_premium")),
+            "hold_not_eligible_for_unattended_resume:unexpected_billing_class": lambda l: l.complete(
+                l.reserve("queue1", "abc123", expected_billing_class="request_standard"), 200, "request_premium"),
+            "other_safety_hold_requires_review": lambda l: (
+                l.complete(l.reserve("queue1", "abc123"), 0, None, error="provider_deadline_exceeded"),
+                l.hold("shared_usage_log_failed")),
+            "hold_not_eligible_for_unattended_resume:access_check_billed":
+                lambda l: l.record_access_check(200, "request_standard"),
+        }
+        for n, (reason, latch) in enumerate(cases.items()):
+            with self.subTest(reason=reason):
+                ledger = Ledger(self.path.parent / f"anomaly{n}.sqlite3", clock=lambda: self.now[0])
+                ledger.create_run("queue1", "0.1", min_gap_seconds=0)
+                latch(ledger)
+                hold = ledger.report()["hold_reason"]
+                ledger.record_access_check(200)
+                for later in (0, 7 * 24 * 3600):
+                    self.now[0] += later
+                    with self.assertRaises(UsageBlocked) as refused:
+                        ledger.resume_unattended("queue1", "Tried to release a billing anomaly")
+                    self.assertEqual(refused.exception.reason, reason)
+                    self.assertEqual(ledger.report()["hold_reason"], hold)
+
+    def test_unattended_release_names_the_run_that_held(self):
+        self.ledger.create_run("queue0", "0.1", min_gap_seconds=0)
+        self.run_with(budget="0.1", min_gap_seconds=0)
+        self.failed_fetch("queue1", "abc123")
+        self.ledger.record_access_check(200)
+        with self.assertRaisesRegex(UsageBlocked, "hold_from_another_run:queue1"):
+            self.ledger.resume_unattended("queue0", self.NOTE)
+        with self.assertRaisesRegex(UsageBlocked, "unknown_run"):
+            self.ledger.resume_unattended("queue9", self.NOTE)
+        with self.assertRaises(ValueError):
+            self.ledger.resume_unattended("queue1", "short")
+        self.assertIsNone(self.ledger.report("queue0")["attempt_records"] or None)
+        self.ledger.resume_unattended("queue1", self.NOTE)
+        self.assertIsNone(self.ledger.report()["hold_run_id"])
+
     def test_access_checks_are_free_reads_and_a_charge_latches_a_hold(self):
         self.run_with()
         self.assertFalse(self.ledger.access_checked("queue1"))

@@ -3,7 +3,8 @@
 Amounts are integer microdollars. Published STARTER prices are estimates, not
 an invoice; actual charges remain unknown unless the provider reports them.
 This ledger never makes a network request. Portal reconciliation can release only
-an explicitly reviewed, fully accounted timeout hold.
+an explicitly reviewed, fully accounted timeout hold; `resume_unattended` releases
+the holds a run may clear by itself, counting their requests at the full reservation.
 """
 from __future__ import annotations
 
@@ -32,7 +33,25 @@ _RESUMABLE_HOLDS = frozenset({"provider_wall_time_exceeded"})
 _UNAUTHENTICATED_HOLDS = frozenset({"provider_denial", "unknown_billing_class", "provider_error"})
 # Each reviewed release covers the holds latched since the previous one, of any kind.
 _REVIEWED_RESUMES = ("reviewed_timeout_resume", "reviewed_media_resume",
-                     "reviewed_unauthenticated_resume")
+                     "reviewed_unauthenticated_resume", "unattended_resume", "unattended_restart")
+# Holds a run may release by itself (the owner, 2026-11-03: "I don't want Instagram to get
+# paused very easily and I want you to be smart about restarting without me"): a failed
+# or timed-out fetch, a crash mid-fetch, a post whose media failed, and the fast-spending
+# window. Billing anomalies (an unknown or unexpected class, a price jump, a charge above
+# the reservation, a billed key check) and a failed usage log still wait for a person.
+_UNATTENDED_HOLDS = frozenset({"provider_denial", "unknown_billing_class", "provider_error",
+                               "provider_unexpected_failure", "provider_wall_time_exceeded",
+                               "burn_limit", "media_capture_or_validation_failed"})
+# A failed request with one of these statuses and no billing class timed out, lost its
+# connection or found String busy, so the run carries on with its next source.
+_TRANSIENT_STATUS = frozenset({None, 0, 408, 425, 429, 500, 502, 503, 504})
+MAX_UNATTENDED_RESUMES_PER_RUN = 8
+# The third failed request in a row stops the run: something wider than one post is wrong.
+MAX_FAILURES_IN_A_ROW = 3
+# A hold this old was latched on an earlier night, so a new night may restart once.
+UNATTENDED_RESTART_SECONDS = 6 * 3600
+# The key check an unattended release needs must be this recent.
+ACCESS_CHECK_FRESH_SECONDS = 3600
 MAX_RUN_MICRODOLLARS = 1_000_000
 MAX_REQUEST_MICRODOLLARS = 6_000
 MAX_RUN_REQUESTS = 111
@@ -693,9 +712,9 @@ class Ledger:
                     raise ValueError("unexpected source host")
                 if abs(portal_at - row["reserved_at"]) > 15 * 60:
                     raise ValueError("portal time does not match reservation")
-                # A price-list settlement is a stand-in that the portal replaces.
+                # A price-list or worst-case settlement is a stand-in that the portal replaces.
                 if (row["actual_micro"] is not None and row["actual_micro"] != actual
-                        and row["actual_source"] != "price_list"):
+                        and row["actual_source"] not in ("price_list", "unattended_max")):
                     raise ValueError("portal charge conflicts with existing actual")
                 if actual > row["reserve_micro"]:
                     raise ValueError("portal charge exceeds reservation")
@@ -839,6 +858,118 @@ class Ledger:
                        (self._clock(), run_id, "reviewed_media_resume", review_note))
         return self.report(run_id)
 
+    def resume_unattended(self, run_id: str, review_note: str) -> dict:
+        """Release a hold without a person when it can't mean a billing problem.
+
+        `run_id` is the run that latched the hold (`report()["hold_run_id"]`). Every hold
+        since the last release must be one of `_UNATTENDED_HOLDS`, and String must have
+        passed a free key check after the hold and within the last hour. Within the
+        night (the hold is under six hours old) it releases:
+
+        - a fetch that failed unbilled with a transient status (a timeout, a lost
+          connection, 408, 425, 429 or a 5xx), or a crash before the fetch settled;
+        - a billed fetch that failed (Instagram refused String, or the answer was
+          unreadable), and a post whose media failed after its page was fetched;
+        - the fast-spending window, once that window has passed;
+
+        at most eight times a run, and never the third failed request in a row (counted
+        across runs). A hold six hours old or more is from an earlier night and also
+        releases a request String itself refused (another 4xx), once, without those two
+        limits; if the next request fails as well, the run stops again. A 401 has
+        its own release (`resume_reviewed_unauthenticated`), and a 2xx answer with no
+        known billing class is a billing problem that waits for a person.
+
+        Each failed or interrupted request is counted at its full reservation
+        (`unattended_max`), which a later portal reconciliation may replace; successful
+        fetches are left for the price list. Failed sources are never fetched again.
+        """
+        run_id = _token(run_id, "run_id")
+        if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
+                or any(ord(ch) < 32 for ch in review_note)):
+            raise ValueError("review_note must be 12-500 printable characters")
+        with self._write() as db:
+            hold, hold_at = db.execute("SELECT hold_reason,hold_at FROM control WHERE singleton=1").fetchone()
+            if hold not in _UNATTENDED_HOLDS:
+                raise UsageBlocked("hold_not_eligible_for_unattended_resume:" + str(hold))
+            run = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            if not run:
+                raise UsageBlocked("unknown_run")
+            now = self._clock()
+            restart = now - hold_at >= UNATTENDED_RESTART_SECONDS
+            holds = db.execute("SELECT event_id,at,run_id,attempt_id,code FROM events WHERE event_id>? "
+                               "AND code LIKE 'hold:%' ORDER BY event_id",
+                               (self._last_reviewed_resume(db),)).fetchall()
+            if not holds:
+                raise UsageBlocked("no_hold_events_to_review")
+            latest = db.execute("SELECT * FROM attempts ORDER BY attempt_id DESC LIMIT 1").fetchone()
+            for event in holds:
+                reason = event["code"][5:]
+                if reason not in _UNATTENDED_HOLDS:
+                    raise UsageBlocked("other_safety_hold_requires_review")
+                if reason == "burn_limit" and event["attempt_id"] is None:
+                    if event["run_id"] != run_id:
+                        raise UsageBlocked("hold_from_another_run:" + str(event["run_id"]))
+                    wait = run["burn_window_seconds"] - (now - event["at"])
+                    if wait > 0:
+                        raise UsageBlocked("burn_window_still_open", wait)
+                    continue
+                # A capture latches media, crash and wall-time holds without naming the
+                # attempt; they concern the ledger's latest one, as the media release assumes.
+                row = (db.execute("SELECT * FROM attempts WHERE attempt_id=?", (event["attempt_id"],)).fetchone()
+                       if event["attempt_id"] is not None else latest)
+                if not row:
+                    raise UsageBlocked("hold_without_an_attempt")
+                if row["run_id"] != run_id:
+                    raise UsageBlocked("hold_from_another_run:" + row["run_id"])
+                status, billed = row["status_code"], row["billing_class"] is not None
+                if event["attempt_id"] is None:
+                    if reason == "media_capture_or_validation_failed":
+                        if (row["settled_at"] is None or status is None or not 200 <= status < 300
+                                or row["error_code"] or not billed or row["usable_media"]):
+                            raise UsageBlocked("media_hold_without_a_fetched_page")
+                    elif row["settled_at"] is not None:
+                        raise UsageBlocked("crash_hold_without_an_interrupted_request")
+                    continue
+                if status is not None and 200 <= status < 300 and not billed:
+                    raise UsageBlocked("billing_anomaly_requires_review")
+                if status == 401 and not billed:
+                    raise UsageBlocked("refused_key_use_resume_reviewed_unauthenticated")
+                if not (billed or status in _TRANSIENT_STATUS or restart):
+                    raise UsageBlocked("string_refused_the_request_restart_next_night")
+            if not restart:
+                used = db.execute("SELECT COUNT(*) FROM reviews WHERE run_id=? AND code='unattended_resume'",
+                                  (run_id,)).fetchone()[0]
+                if used >= MAX_UNATTENDED_RESUMES_PER_RUN:
+                    raise UsageBlocked("run_unattended_resume_limit_reached")
+                # Counted across runs, so the first request after a restart is a probe:
+                # if it fails too, the run stops again after one request, not three.
+                in_a_row = 0
+                for row in db.execute("SELECT usable_media FROM attempts ORDER BY attempt_id DESC"):
+                    if row["usable_media"]:
+                        break
+                    in_a_row += 1
+                if in_a_row >= MAX_FAILURES_IN_A_ROW:
+                    raise UsageBlocked("failures_in_a_row_limit_reached")
+            check = db.execute("SELECT code,at FROM events WHERE event_id>? AND code IN "
+                               "('access_check_ok','access_check_failed') ORDER BY event_id DESC LIMIT 1",
+                               (holds[-1]["event_id"],)).fetchone()
+            if not check or check["code"] != "access_check_ok" or now - check["at"] > ACCESS_CHECK_FRESH_SECONDS:
+                raise UsageBlocked("passing_access_check_required_after_failure")
+            for row in db.execute("SELECT * FROM attempts WHERE run_id=? AND (settled_at IS NULL OR "
+                                  "(actual_micro IS NULL AND (status_code IS NULL OR status_code NOT "
+                                  "BETWEEN 200 AND 299 OR error_code IS NOT NULL OR billing_class IS NULL)))",
+                                  (run_id,)).fetchall():
+                db.execute("UPDATE attempts SET settled_at=COALESCE(settled_at,?),actual_micro=?,"
+                           "actual_source='unattended_max' WHERE attempt_id=?",
+                           (now, max(row["reserve_micro"], row["estimate_micro"] or 0), row["attempt_id"]))
+                self._event(db, "unattended_max_charge", run_id, row["attempt_id"])
+            code = "unattended_restart" if restart else "unattended_resume"
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+            self._event(db, code, run_id)
+            db.execute("INSERT INTO reviews(at,run_id,code,note) VALUES(?,?,?,?)",
+                       (now, run_id, code, review_note))
+        return self.report(run_id)
+
     @staticmethod
     def _last_reviewed_resume(db) -> int:
         marks = ",".join("?" * len(_REVIEWED_RESUMES))
@@ -949,6 +1080,16 @@ class Ledger:
             hold = db.execute("SELECT hold_reason,hold_at FROM control WHERE singleton=1").fetchone()
             if run_id is not None and not db.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
                 raise ValueError("unknown run")
+            hold_run_id = None
+            if hold["hold_reason"]:
+                # The run a release names: the latest hold's own run, else its attempt's, else
+                # the latest attempt's (a capture latches some holds without naming either).
+                latest_hold = db.execute("SELECT e.run_id,a.run_id FROM events e LEFT JOIN attempts a "
+                                         "ON a.attempt_id=e.attempt_id WHERE e.code LIKE 'hold:%' "
+                                         "ORDER BY e.event_id DESC LIMIT 1").fetchone()
+                latest_attempt = db.execute("SELECT run_id FROM attempts ORDER BY attempt_id DESC LIMIT 1").fetchone()
+                hold_run_id = ((latest_hold and (latest_hold[0] or latest_hold[1]))
+                               or (latest_attempt and latest_attempt[0]) or None)
             rows = db.execute("SELECT * FROM attempts WHERE run_id=? ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM attempts ORDER BY attempt_id").fetchall()
             events = db.execute("SELECT at,run_id,attempt_id,code FROM events WHERE run_id=? ORDER BY event_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,attempt_id,code FROM events ORDER BY event_id").fetchall()
             reviews = db.execute("SELECT at,run_id,code,note FROM reviews WHERE run_id=? ORDER BY review_id", (run_id,)).fetchall() if run_id else db.execute("SELECT at,run_id,code,note FROM reviews ORDER BY review_id").fetchall()
@@ -964,7 +1105,7 @@ class Ledger:
             "runs": [{"run_id": r["run_id"], "budget_micro": r["budget_micro"],
                       "max_requests": r["max_requests"], "max_request_micro": r["max_request_micro"]} for r in runs],
             "global_hold": hold["hold_reason"], "hold_reason": hold["hold_reason"],
-            "hold_at": hold["hold_at"],
+            "hold_at": hold["hold_at"], "hold_run_id": hold_run_id,
             "attempt_count": len(rows), "attempts": len(rows),
             "pending_count": len(pending), "outstanding_attempts": len(pending),
             "reserved_outstanding_micro": sum(r["reserve_micro"] for r in pending),

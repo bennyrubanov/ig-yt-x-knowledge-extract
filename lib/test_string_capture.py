@@ -315,6 +315,39 @@ class CaptureTests(unittest.TestCase):
         self.assertTrue(self.ledger.access_checked("run"))
         self.assertEqual(self.ledger.report()["attempt_count"], 0)
 
+    def test_a_timed_out_fetch_is_released_by_the_command_and_the_run_goes_on(self):
+        ledger_path = str(self.root / "usage.sqlite")
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page",
+                return_value={"status_code": 0, "error": "provider_deadline_exceeded"}):
+            with self.assertRaisesRegex(CaptureStopped, "provider_denial"):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+        self.assertEqual(self.ledger.report()["hold_run_id"], "run")
+        note = ["--review-note", "String timed out; marked fail, never refetched"]
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["--ledger", ledger_path, "resume-unattended", "--run", "run", *note]), 3)
+        self.assertIn("passing_access_check_required", output.getvalue())
+        with patch("string_capture.api_key", return_value="proxy-injected"), \
+                patch("string_capture.check_access", return_value={"status_code": 200}), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["--ledger", ledger_path, "check-access", "--run", "run"]), 0)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["--ledger", ledger_path, "resume-unattended", "--run", "run", *note]), 0)
+        self.assertIsNone(json.loads(output.getvalue())["hold_reason"])
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page") as fetch:
+            with self.assertRaises(UsageBlocked):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+            fetch.assert_not_called()
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page",
+                return_value={"status_code": 503, "error": "provider_http_error"}) as fetch:
+            with self.assertRaises(CaptureStopped):
+                capture("https://www.instagram.com/reel/Other45/", "run", self.ledger, self.root)
+            fetch.assert_called_once()
+
     def test_capture_retries_a_source_string_refused_as_unauthenticated_once(self):
         with patch("string_capture.api_key", return_value="fake"), patch(
                 "string_capture.bounded_fetch_page",

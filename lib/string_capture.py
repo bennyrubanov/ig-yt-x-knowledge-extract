@@ -447,6 +447,12 @@ def main(argv=None) -> int:
                                  help="Release a hold from String refusing the key (HTTP 401), after a passing check-access")
     auth_resume.add_argument("--run", required=True)
     auth_resume.add_argument("--review-note", required=True)
+    unattended = sub.add_parser("resume-unattended",
+                                help="Release a hold that can't mean a billing problem (a timeout, crash, busy "
+                                     "String, dead post or fast spending) after a recent passing check-access; "
+                                     "failed requests count at their full reservation")
+    unattended.add_argument("--run", required=True)
+    unattended.add_argument("--review-note", required=True)
     media_resume = sub.add_parser("resume-reviewed-media-failure",
                                   help="Release one reviewed media-validation hold (at most two per run)")
     media_resume.add_argument("--run", required=True)
@@ -502,6 +508,8 @@ def main(argv=None) -> int:
                     return 3
             elif args.command == "resume-reviewed-unauthenticated":
                 result = ledger.resume_reviewed_unauthenticated(args.run, args.review_note)
+            elif args.command == "resume-unattended":
+                result = ledger.resume_unattended(args.run, args.review_note)
             elif args.command == "reconcile-portal":
                 result = ledger.reconcile_portal(args.run, args.evidence, args.review_note)
             elif args.command == "settle-from-price-list":

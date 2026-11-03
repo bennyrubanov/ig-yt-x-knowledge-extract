@@ -83,8 +83,9 @@ evade a hold. Production runs must use the same ledger.
 - Reserve the full per-request allowance **before** contacting String. Default
   maximum is $0.006/request; run budget and request count are immutable.
 - Only one outstanding paid request across the ledger. An interrupted request
-  retains its reservation and prevents another request until explicitly
-  investigated; there is no automatic reset/retry command.
+  retains its reservation and prevents another request until it is investigated
+  or released by `resume-unattended` (below), which counts it at its full
+  reservation; there is no automatic retry of that source.
 - Default spacing is at least 10 seconds, with a $0.03 allowance per rolling
   60 seconds. A pacing refusal makes no request. The run budget and request
   count stop that run; fast spending still latches a global hold. These are
@@ -92,7 +93,8 @@ evade a hold. Production runs must use the same ledger.
   platform permits a particular retrieval rate.
 - Stop on missing/unknown billing class, non-success/error response, any charge
   above reservation, or a price increase exceeding four times the first verified
-  class. No new run name clears a hold.
+  class. No new run name clears a hold; the releases below do, each for its own
+  kind of hold.
 - A separate request worker enforces a 120-second total wall-clock deadline,
   including connection attempts and response reads. On expiry it is terminated;
   the charge stays unknown, its reservation remains accounted for, and collection
@@ -257,7 +259,52 @@ The failed attempt must be the ledger's latest, settled with HTTP 200 and with
 no other hold since the last reviewed release. It stays recorded as unusable
 and is never fetched again. A run allows at most two such releases, so a third
 media failure stops it for good. File the source from what was saved and state
-the missing item in the note.
+the missing item in the note. Unattended queue runs use `resume-unattended`
+instead (below), which also covers media failures with a wider limit.
+
+### Unattended release: a run carries on by itself
+
+The owner, 2026-11-03: "I don't want Instagram to get paused very easily and I want you
+to be smart about restarting without me". Queue runs that work unattended release the
+holds that can't mean a billing problem themselves, after a free key check:
+
+```bash
+python scripts/igx.py public-capture usage            # hold_reason and hold_run_id
+python scripts/igx.py public-capture check-access --run HOLD_RUN_ID
+python scripts/igx.py public-capture resume-unattended --run HOLD_RUN_ID \
+  --review-note 'String timed out on SHORTCODE; marked fail, never refetched'
+```
+
+Within the night (the hold is under six hours old) it releases:
+
+- a fetch that failed without a billing class with a status that means passing trouble:
+  a timeout or lost connection (status 0), 408, 425, 429 or a 5xx, and a crash before
+  the fetch settled (`provider_unexpected_failure`);
+- a billed fetch that failed (Instagram refused String's fetch, or String's answer
+  couldn't be read), and a post whose media failed after its page was fetched (deleted,
+  private, or invalid);
+- the fast-spending window, once it has passed (it answers `burn_window_still_open`
+  with the seconds to wait).
+
+A run allows at most eight such releases, and never the third failed request in a row,
+counted across runs: that points at something wider than one post (String down, or a
+page change that broke the parser), so the run stops Instagram for the night. A hold six
+hours old or more was latched on an earlier night, so the next night's run may restart
+once, without those two limits; the restart also covers a request String itself refused
+(another 4xx). Its first request is then a probe: if that fails too, it's one more
+failure in a row, and the night stops after spending one request, not three.
+
+It never releases a billing anomaly: a 2xx answer without a known billing class, an
+unexpected class, a price jump, a charge above the reservation, a billed key check, or
+a failed usage log. Those wait for a person. A 401 (String refused the key) has its own
+release, above. The key check must come after the hold and within the last hour.
+
+Each failed or interrupted request is counted at its full reservation
+(`actual_source: unattended_max`, an `unattended_max_charge` event), which a later
+`reconcile-portal` may replace; successful fetches in the run are left for
+`settle-from-price-list`. The release is recorded in `reviews` as `unattended_resume`
+(within the night) or `unattended_restart` (a later night) with its note. Failed sources
+stay attempted and are never fetched again, so mark their saves failed with the reason.
 
 ### One user-directed carousel soundtrack recheck
 
