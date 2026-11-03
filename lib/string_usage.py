@@ -286,9 +286,13 @@ class Ledger:
 
     def create_run(
         self, run_id: str, budget_usd: object, *, max_requests: int = 30,
-        max_request_usd: object = "0.006", min_gap_seconds: object = 10,
+        max_request_usd: object = "0.006", min_gap_seconds: object = 15,
         burn_limit_usd: object = "0.03", burn_window_seconds: object = 60,
     ) -> dict:
+        # The default gap keeps a run that fetches as fast as it may under the burn
+        # limit: $0.03 a minute at $0.006 a request is 5 a minute, one per 12 seconds.
+        # The old 10-second default let a sixth request in and latched burn_limit holds
+        # (2026-11-03, three saves never fetched).
         run_id = _token(run_id, "run_id")
         if isinstance(max_requests, bool) or not isinstance(max_requests, int) or max_requests < 1:
             raise ValueError("max_requests must be a positive integer")

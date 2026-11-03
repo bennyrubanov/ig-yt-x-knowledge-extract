@@ -154,6 +154,18 @@ class NoteGeminiTests(unittest.TestCase):
         row = self.drafter([reply(draft_answer(prompt="Should I invest?"))]).draft(item)
         self.assertEqual(row["prompt"], ng.NO_PROMPT)
 
+    def test_an_empty_prompts_list_beside_a_title_reads_the_title(self):
+        item = {**self.item, "prompts": [], "title": "Is this true? The Paper on YouTube"}
+        row = self.drafter([reply(draft_answer(prompt="Is this true?"))]).draft(item)
+        self.assertEqual(row["prompt"], "Is this true?")
+        self.assertIn("Is this true? The Paper on YouTube", self.requests[0].data.decode())
+
+    def test_an_empty_prompts_list_without_a_title_is_a_bare_link(self):
+        item = {**self.item, "prompts": []}
+        item.pop("title", None)
+        row = self.drafter([reply(draft_answer(prompt="Is this true?"))]).draft(item)
+        self.assertEqual(row["prompt"], ng.NO_PROMPT)
+
     def test_bad_answer_is_retried_then_the_next_model_drafts(self):
         replies = [reply("not json"), reply(draft_answer(topics=["nope"])), reply(draft_answer())]
         row = self.drafter(replies).draft(self.item)

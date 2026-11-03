@@ -13,7 +13,8 @@ Input: a JSON file holding one item, a list of items, or {"items": [...]}. Per i
   saved_url        exact saved URL (default: source)
   notion_page_ids  queue rows, oldest first (or notion_page_id)
   added_at         the first row's created time, ISO
-  prompts          saved prompts in date order; [] for a bare link
+  prompts          saved prompts in date order; [] for a bare link (an empty list
+                   beside a non-empty title is read as not split: the title is used)
   title            optional raw saved title, when prompts were not split out
   typed_text       optional text typed on a stray page with the save (string or list)
   author           optional "@handle (Name)"
@@ -248,9 +249,17 @@ def image_parts(images: list[Path], limit: int) -> tuple[list[dict], dict[str, P
 
 
 def explicit_prompts(item: dict) -> list[str] | None:
+    """The saved prompts, or None when they weren't split out and `title` holds them.
+
+    An empty `prompts` beside a non-empty `title` counts as not split: on 2026-11-03 a
+    run passed `prompts: []` with every raw saved title, and six typed prompts would
+    have gone unanswered."""
     if "prompts" not in item:
         return None
-    return [str(p).strip() for p in item.get("prompts") or [] if str(p).strip()]
+    prompts = [str(p).strip() for p in item.get("prompts") or [] if str(p).strip()]
+    if not prompts and str(item.get("title") or "").strip():
+        return None
+    return prompts
 
 
 def typed_text(item: dict) -> list[str]:

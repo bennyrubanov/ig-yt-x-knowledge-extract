@@ -86,8 +86,11 @@ evade a hold. Production runs must use the same ledger.
   retains its reservation and prevents another request until it is investigated
   or released by `resume-unattended` (below), which counts it at its full
   reservation; there is no automatic retry of that source.
-- Default spacing is at least 10 seconds, with a $0.03 allowance per rolling
-  60 seconds. A pacing refusal makes no request. The run budget and request
+- Default spacing is at least 15 seconds, with a $0.03 allowance per rolling
+  60 seconds. At the $0.006 reservation that allowance is five requests a minute, so
+  the gap is wider than 12 seconds: a run fetching as fast as the gap lets it never
+  trips the fast-spending hold (the old 10-second default let a sixth request in and
+  held three saves on 2026-11-03). A pacing refusal makes no request. The run budget and request
   count stop that run; fast spending still latches a global hold. These are
   spend controls, not assurances that any
   platform permits a particular retrieval rate.
