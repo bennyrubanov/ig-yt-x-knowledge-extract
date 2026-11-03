@@ -1,6 +1,9 @@
 <!-- Copy into the run folder (exports/<date>-queue/WRITER.md) and point each writer at it.
      The coordinator keeps capture, routing, hubs, project PRs and Notion marking; writers
-     only write notes and result lines. First used 2026-10-08 with Sonnet writers. -->
+     only write notes and result lines. First used 2026-10-08 with Sonnet writers.
+     `igx.py note-gemini` also sends this file's "How to read the material", "Key stills",
+     "The note" and "Result line" sections to Gemini; keep those headings and the hub list
+     (lib/test_note_gemini.py checks them). -->
 
 # Note-writing brief for queue runs (subagent template)
 
@@ -103,6 +106,16 @@ instruction is reflected in `topics`. Only for unusually substantive sources, ad
 Hubs (`topics`, first is primary): health, fitness-tips, cooking, skin-hair, wealth,
 building-an-app, marketing-an-app, travel, clothes, tennis, music-producing, language,
 geopolitics, privacy, real-estate, decisions, people, ai, good-info.
+
+What each hub holds, from the vault's own index: health (do-list, grocery and habit
+evidence), fitness-tips (training principles, named plans), cooking (recipes, grocery,
+technique), skin-hair, wealth (investing, tickers, books), building-an-app (shipping,
+hosting, agent tooling), marketing-an-app (ads, App Store, creatives, go-to-market),
+travel (places, packing, points), clothes (wear, scents), tennis, music-producing
+(tools, workflows, tracks), language (Mandarin method first), geopolitics (maps,
+chokepoints, dated events), privacy (OPSEC names and verdicts), real-estate, decisions
+(how to decide), people (a hub per person), ai (papers and model research), good-info
+(useful leftovers that fit no other hub).
 
 ## Result line
 
