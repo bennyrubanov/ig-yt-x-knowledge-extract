@@ -148,9 +148,22 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaises(UsageBlocked) as gap:
             self.ledger.reserve("queue1", "def456")
         self.assertEqual(gap.exception.reason, "minimum_gap")
-        self.assertEqual(gap.exception.wait_seconds, 10)
-        self.now[0] += 10
+        self.assertEqual(gap.exception.wait_seconds, 15)
+        self.now[0] += 15
         self.assertIsInstance(self.ledger.reserve("queue1", "def456"), int)
+
+    def test_fetching_as_fast_as_the_default_gap_allows_never_trips_the_burn_limit(self):
+        self.ledger.create_run("queue1", "1", max_requests=30)
+        for i in range(20):
+            while True:
+                try:
+                    attempt = self.ledger.reserve("queue1", f"src{i}", expected_billing_class="browser_premium")
+                    break
+                except UsageBlocked as blocked:
+                    self.assertEqual(blocked.reason, "minimum_gap")
+                    self.now[0] += blocked.wait_seconds
+            self.ledger.complete(attempt, 200, billed_request_type="browser_premium")
+        self.assertIsNone(self.ledger.report()["global_hold"])
 
     def test_burn_limit_latches_before_burst(self):
         self.run_with(budget="1", min_gap_seconds=0, burn_limit_usd="0.006")

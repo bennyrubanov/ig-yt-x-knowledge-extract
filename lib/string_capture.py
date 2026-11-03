@@ -415,7 +415,7 @@ def main(argv=None) -> int:
     init.add_argument("--budget-usd", help="Override the approved per-run estimate (maximum $1)")
     init.add_argument("--max-requests", type=int, default=30)
     init.add_argument("--max-request-usd", default="0.006")
-    init.add_argument("--min-gap-seconds", type=float, default=10)
+    init.add_argument("--min-gap-seconds", type=float, default=15)
     init.add_argument("--acknowledge-incident", action="store_true", required=True)
     fetch = sub.add_parser("fetch", help="One metered public fetch, then anonymous validated media; no retries")
     fetch.add_argument("url")
