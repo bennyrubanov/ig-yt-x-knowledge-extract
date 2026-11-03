@@ -17,20 +17,13 @@ import os
 import re
 import sys
 import time
-import urllib.error
-import urllib.request
+import urllib.request  # noqa: F401  (tests patch urlopen through this module)
 from pathlib import Path
 
+from gemini_api import API, DEADLINE_SECONDS, DEFAULT_KEY_ENV, DEFAULT_MODELS, RETRY_STATUS, generate, stream  # noqa: F401
 from local_config import downloads_dir
 
-API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
-# Free-tier order, tested 2026-10-31: Flash-Lite answers fastest; 3.5 and 3.6 Flash
-# answered while 3.8 and 3.7 Flash returned 503 "high demand" for hours.
-DEFAULT_MODELS = ("gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.8-flash")
-DEFAULT_KEY_ENV = "GEMINI_PERSONAL_API_KEY"
 PROMPT = "Transcribe the speech"
-RETRY_STATUS = {429, 500, 503}
-DEADLINE_SECONDS = 300
 _ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -47,67 +40,22 @@ def video_id(url: str) -> str:
     return match[1]
 
 
-def stream_once(vid: str, model: str, key: str, *, opener=None) -> dict:
-    """One streaming request. Returns status, text, finishReason and usage; never the key."""
-    opener = opener or urllib.request.urlopen
-    body = {"contents": [{"parts": [
+def request_body(vid: str) -> dict:
+    return {"contents": [{"parts": [
         {"file_data": {"file_uri": f"https://www.youtube.com/watch?v={vid}"}},
         {"text": PROMPT}]}],
         "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_LOW"}}
-    req = urllib.request.Request(API.format(model=model), data=json.dumps(body).encode(),
-                                 method="POST", headers={"Content-Type": "application/json",
-                                                         "x-goog-api-key": key})
-    started = time.time()
-    text, finish, usage = [], None, None
-    try:
-        with opener(req, timeout=DEADLINE_SECONDS) as response:
-            for raw in response:
-                line = raw.decode("utf-8", "replace").strip()
-                if not line.startswith("data:"):
-                    continue
-                event = json.loads(line[5:])
-                for candidate in event.get("candidates", []):
-                    finish = candidate.get("finishReason", finish)
-                    for part in candidate.get("content", {}).get("parts", []):
-                        if "text" in part:
-                            text.append(part["text"])
-                usage = event.get("usageMetadata", usage)
-                if time.time() - started > DEADLINE_SECONDS:
-                    return {"status": 200, "text": "".join(text), "finish": finish,
-                            "usage": usage, "error": "deadline"}
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read(300).decode("utf-8", "replace")
-        except OSError:
-            detail = ""
-        finally:
-            exc.close()
-        return {"status": exc.code, "error": detail}
-    except (OSError, ValueError) as exc:
-        return {"status": None, "error": type(exc).__name__}
-    return {"status": 200, "text": "".join(text), "finish": finish, "usage": usage}
+
+
+def stream_once(vid: str, model: str, key: str, *, opener=None) -> dict:
+    """One streaming request. Returns status, text, finishReason and usage; never the key."""
+    return stream(model, key, request_body(vid), opener=opener)
 
 
 def transcribe(vid: str, key: str, models=DEFAULT_MODELS, *, pause_seconds: float = 20,
                opener=None, sleep=time.sleep) -> dict:
-    tries = []
-    for model in models:
-        for attempt in (1, 2):
-            result = stream_once(vid, model, key, opener=opener)
-            complete = (result["status"] == 200 and result.get("finish") == "STOP"
-                        and not result.get("error") and result.get("text", "").strip())
-            tries.append({"model": model, "status": result["status"],
-                          "finish": result.get("finish"), "error": result.get("error", "")[:200]
-                          if result.get("error") else None})
-            if complete:
-                return {"ok": True, "model": model, "text": result["text"],
-                        "usage": result.get("usage"), "tries": tries}
-            retryable = result["status"] in RETRY_STATUS or result["status"] == 200 or result["status"] is None
-            if not retryable:
-                break
-            if attempt == 1:
-                sleep(pause_seconds)
-    return {"ok": False, "tries": tries}
+    return generate(request_body(vid), key, models, pause_seconds=pause_seconds,
+                    opener=opener, sleep=sleep)
 
 
 def main(argv: list[str] | None = None) -> int:
