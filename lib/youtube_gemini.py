@@ -8,6 +8,8 @@ never switches player clients or proxies.
 Models are tried in order. A busy model (HTTP 503/429/500) or a stream that ends
 without finishReason STOP is retried once after a pause, then the next model is
 tried. The result is a model transcription, not the creator's captions.
+Exit 0 with a transcript, 3 when no model finished one, 2 for a bad link or missing
+key, 4 when Google's answer shows billing on the key's project (stop using Gemini).
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ import time
 import urllib.request  # noqa: F401  (tests patch urlopen through this module)
 from pathlib import Path
 
-from gemini_api import API, DEADLINE_SECONDS, DEFAULT_KEY_ENV, DEFAULT_MODELS, RETRY_STATUS, generate, stream  # noqa: F401
+from gemini_api import API, DEADLINE_SECONDS, DEFAULT_KEY_ENV, DEFAULT_MODELS, RETRY_STATUS, BillingLinked, generate, stream  # noqa: F401
 from local_config import downloads_dir
 
 PROMPT = "Transcribe the speech"
@@ -77,7 +79,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": False, "error": f"{args.key_env} is not set"}))
         return 2
     models = tuple(m.strip() for m in args.models.split(",") if m.strip())
-    result = transcribe(vid, key, models)
+    try:
+        result = transcribe(vid, key, models)
+    except BillingLinked as exc:
+        print(json.dumps({"ok": False, "id": vid, "error": f"billing on the key's project: {exc}"}))
+        return 4
     if not result["ok"]:
         print(json.dumps({"ok": False, "id": vid, "tries": result["tries"]}, indent=1))
         return 3

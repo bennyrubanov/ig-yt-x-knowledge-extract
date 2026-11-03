@@ -33,6 +33,26 @@ def per_day_429():
     return HTTPError("https://example.invalid", 429, "quota", {}, io.BytesIO(json.dumps(body).encode()))
 
 
+def paid_429():
+    body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "quota", "details": [
+        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [
+            {"quotaId": "GenerateRequestsPerMinutePerProjectPerModel", "quotaValue": "1000"}]}]}}
+    return HTTPError("https://example.invalid", 429, "quota", {}, io.BytesIO(json.dumps(body).encode()))
+
+
+def http_error(code):
+    return HTTPError("https://example.invalid", code, "x", {}, io.BytesIO(json.dumps({"error": {"code": code}}).encode()))
+
+
+def sequence(replies):
+    def opener(req, timeout):
+        nxt = replies.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+    return opener
+
+
 def draft_answer(**overrides):
     answer = {"status": "written", "prompt": "", "title": "Where you study matters most for some majors",
               "slug": "Abc123def45 College Choice Earnings by Major", "author": "Somebody Else",
@@ -214,6 +234,7 @@ class NoteGeminiTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True), redirect_stdout(out):
             self.assertEqual(ng.main([str(items), "--out", str(self.out), "--results", str(results)]), 2)
         with patch.dict("os.environ", {"GEMINI_PERSONAL_API_KEY": "secret-key"}), \
+                patch("note_gemini.tier_check", return_value={"tier": "free"}), \
                 patch("note_gemini.Drafter.draft", return_value={"key": "Abc123def45", "status": "written",
                                                                  "vault_path": "youtube/x.md"}), \
                 redirect_stdout(out):
@@ -221,6 +242,57 @@ class NoteGeminiTests(unittest.TestCase):
                                       "--downloads", str(self.downloads)]), 0)
         self.assertEqual(json.loads(results.read_text())["status"], "written")
         self.assertNotIn("secret-key", out.getvalue())
+
+    def test_tier_check_tells_free_from_billed_and_unknown(self):
+        def check(*replies):
+            return gemini_api.tier_check("k", models=("probe-a", "probe-b"), opener=sequence(list(replies)))
+        self.assertEqual(check(per_day_429())["tier"], "free")
+        self.assertEqual(check(reply("OK"))["tier"], "billed")
+        self.assertEqual(check(http_error(402))["tier"], "billed")
+        self.assertEqual(check(paid_429())["tier"], "billed")
+        free = check(http_error(404), per_day_429())
+        self.assertEqual((free["tier"], free["model"]), ("free", "probe-b"))
+        unknown = check(http_error(404), http_error(503))
+        self.assertEqual(unknown["tier"], "unknown")
+        self.assertIn("probe-a: 404", unknown["detail"])
+
+    def test_a_billing_sign_stops_drafting_and_writes_nothing(self):
+        for refusal in (paid_429(), http_error(402)):
+            with self.assertRaises(gemini_api.BillingLinked):
+                self.drafter([refusal, reply(draft_answer())]).draft(self.item)
+        self.assertEqual(list(self.out.rglob("*.md")), [])
+
+    def test_command_stops_when_the_key_shows_billing(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        items = self.root / "batch.json"
+        items.write_text(json.dumps({"items": [self.item, {**self.item, "key": "Other000000"}]}))
+        results = self.root / "results.jsonl"
+        args = [str(items), "--out", str(self.out), "--results", str(results), "--gap", "0"]
+        out = io.StringIO()
+        with patch.dict("os.environ", {"GEMINI_PERSONAL_API_KEY": "secret-key"}), redirect_stdout(out):
+            with patch("note_gemini.tier_check", return_value={"tier": "billed", "detail": "402"}):
+                self.assertEqual(ng.main(args), 4)
+            self.assertFalse(results.exists())
+            with patch("note_gemini.tier_check", return_value={"tier": "free"}), \
+                    patch("note_gemini.Drafter.draft", side_effect=gemini_api.BillingLinked("lite: 402")) as draft:
+                self.assertEqual(ng.main(args), 4)
+        self.assertEqual(draft.call_count, 1)
+        rows = [json.loads(line) for line in results.read_text().splitlines()]
+        self.assertEqual([r["status"] for r in rows], ["not-sent", "not-sent"])
+        self.assertIn("billing", rows[0]["reason"])
+        summary = json.loads(out.getvalue().strip().splitlines()[-1])
+        self.assertEqual(summary["billing_stop"], "lite: 402")
+        self.assertNotIn("secret-key", out.getvalue())
+
+    def test_transcripts_stop_on_a_billing_sign(self):
+        import youtube_gemini
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        with patch.dict("os.environ", {"GEMINI_PERSONAL_API_KEY": "secret-key"}), \
+                patch("youtube_gemini.transcribe", side_effect=gemini_api.BillingLinked("lite: 402")), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(youtube_gemini.main(["https://youtu.be/Abc123def45"]), 4)
 
 
 if __name__ == "__main__":

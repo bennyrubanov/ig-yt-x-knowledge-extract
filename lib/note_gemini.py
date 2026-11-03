@@ -30,7 +30,10 @@ vault notes or the key. Free-tier requests may be used by Google to improve its 
 Writes <out>/<folder>/<key>-<slug>.md, stills under <out>/<folder>/_media/<key>/, and
 one JSON result line per item to --results. Exit 0 when every item was drafted, blocked,
 already filed or passed over; 3 when no model answered for some item (write those the
-usual way); 2 for bad input or a missing key.
+usual way); 2 for bad input or a missing key; 4 when the key's project shows billing
+(checked first with `gemini_api.tier_check`, and on every answer), in which case nothing
+more is sent to Gemini and the remaining items are left for the usual way. The last line
+printed is a summary: counts, requests, tokens and the tier.
 """
 from __future__ import annotations
 
@@ -45,7 +48,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gemini_api import DEFAULT_KEY_ENV, DEFAULT_MODELS, generate
+from gemini_api import DEFAULT_KEY_ENV, DEFAULT_MODELS, BillingLinked, generate, tier_check
 from local_config import REPO_ROOT, downloads_dir
 
 BRIEF = REPO_ROOT / "docs" / "note-writer-brief.md"
@@ -563,22 +566,44 @@ def main(argv: list[str] | None = None) -> int:
     if not key and not args.dry_run:
         print(json.dumps({"ok": False, "error": f"{args.key_env} is not set"}))
         return 2
+    tier = {"tier": "not checked"}
+    if not args.dry_run:
+        tier = tier_check(key)
+        if tier["tier"] == "billed":
+            print(json.dumps({"ok": False, "error": f"billing on the key's project: {tier['detail']}"}))
+            return 4
+        if tier["tier"] == "unknown":
+            print(f"free tier not confirmed ({tier['detail']}); a billing sign stops the run", file=sys.stderr)
     drafter = Drafter(key=key, models=[m.strip() for m in args.models.split(",") if m.strip()], out=args.out,
                       vault=args.vault or args.out, downloads=args.downloads, run_date=args.run_date,
                       max_images=args.max_images, redo=args.redo)
-    failed = 0
+    counts, requests, tokens, stopped = {}, 0, [0, 0], None
     args.results.parent.mkdir(parents=True, exist_ok=True)
     for index, item in enumerate(items):
-        if index and not args.dry_run:
-            time.sleep(args.gap)
-        row = drafter.draft(item, dry_run=args.dry_run)
-        failed += row["status"] == "failed"
+        if stopped:
+            row = {"key": str(item.get("key", "")), "status": "not-sent", "reason": "Gemini stopped: billing"}
+        else:
+            if index and not args.dry_run:
+                time.sleep(args.gap)
+            try:
+                row = drafter.draft(item, dry_run=args.dry_run)
+            except BillingLinked as exc:
+                stopped = str(exc)
+                row = {"key": str(item.get("key", "")), "status": "not-sent", "reason": f"billing: {stopped}"}
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+        requests += len(row.get("tries") or [])
+        usage = row.get("usage") or {}
+        tokens[0] += usage.get("promptTokenCount") or 0
+        tokens[1] += usage.get("candidatesTokenCount") or 0
         with args.results.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(status_line(row), flush=True)
-    if drafter.skip:
-        print(f"models skipped for the rest of this run: {', '.join(sorted(drafter.skip))}", file=sys.stderr)
-    return 3 if failed else 0
+    summary = {"summary": counts, "requests": requests, "tokens_in": tokens[0], "tokens_out": tokens[1],
+               "tier": tier["tier"], "skipped_models": sorted(drafter.skip), "billing_stop": stopped}
+    print(json.dumps(summary), flush=True)
+    if stopped:
+        return 4
+    return 3 if counts.get("failed") else 0
 
 
 if __name__ == "__main__":
