@@ -198,6 +198,112 @@ def _audio_metadata(node: dict) -> dict | None:
     return None
 
 
+class _PageSummary(_Scripts):
+    """Collect the title and canonical path while _Scripts collects JSON blocks."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_title = False
+        self.title: str | None = None
+        self.title_parts: list[str] = []
+        self.canonical: str | None = None
+        self.og_url: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        super().handle_starttag(tag, attrs)
+        fields = dict(attrs)
+        if tag == "title" and self.title is None:
+            self.in_title = True
+            self.title_parts = []
+        elif tag == "link" and (fields.get("rel") or "").lower() == "canonical" and self.canonical is None:
+            self.canonical = fields.get("href") or ""
+        elif tag == "meta" and (fields.get("property") or "").lower() == "og:url" and self.og_url is None:
+            self.og_url = fields.get("content") or ""
+
+    def handle_data(self, data: str) -> None:
+        super().handle_data(data)
+        if self.in_title:
+            self.title_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        super().handle_endtag(tag)
+        if tag == "title" and self.in_title:
+            self.in_title = False
+            self.title = " ".join("".join(self.title_parts).split())
+
+
+def _node_summary(node: dict) -> str:
+    children = node.get("carousel_media")
+    if not isinstance(children, list):
+        sidecar = node.get("edge_sidecar_to_children")
+        edges = sidecar.get("edges") if isinstance(sidecar, dict) else None
+        children = ([e.get("node") if isinstance(e, dict) else None for e in edges]
+                    if isinstance(edges, list) else None)
+    if children is not None:
+        missing = [i + 1 for i, c in enumerate(children)
+                   if not isinstance(c, dict) or _one_media(c) is None]
+        text = f"carousel {len(children)} slides"
+        if missing:
+            text += " (no media: " + ",".join(map(str, missing)) + ")"
+    else:
+        found = _one_media(node)
+        if found:
+            text = found["kind"]
+        else:
+            keys = ",".join(sorted(str(k)[:30] for k in node)[:8])
+            text = f"no media fields, keys {keys}"
+    owners = [node.get("owner"), node.get("user")]
+    if (node.get("is_private") is True or node.get("private") is True
+            or any(isinstance(o, dict) and o.get("is_private") is True for o in owners)):
+        text += ", private"
+    return text
+
+
+def describe_source(data, shortcode: str) -> str:
+    """One privacy-safe line about the page String returned, for failure diagnosis.
+
+    Holds no media URL, header value or page text other than the title and a URL
+    path; never raises.
+    """
+    try:
+        is_text = isinstance(data, str)
+        raw = data if is_text else json.dumps(data, default=str)
+        parts = [f"{len(raw):,} chars"]
+        roots: list = []
+        if is_text:
+            parser = _PageSummary()
+            parser.feed(raw)
+            title = (parser.title or "")[:100]
+            parts.append(f'title "{title}"' if title else "title none")
+            href = parser.canonical or parser.og_url
+            path = urlsplit(href).path[:100] if href else ""
+            parts.append(f"canonical {path}" if path else "canonical none")
+            bad = 0
+            for script in parser.scripts:
+                try:
+                    roots.append(json.loads(script))
+                except ValueError:
+                    bad += 1
+            parts.append(f"{len(parser.scripts)} JSON blocks ({bad} unreadable)")
+            if raw.lstrip().startswith(("{", "[")):
+                try:
+                    roots.append(json.loads(raw))
+                except ValueError:
+                    pass
+        else:
+            roots.append(data)
+        parts.append(f"shortcode occurs {raw.count(shortcode) if shortcode else 0} times")
+        matches = [n for root in roots for n in _walk(root)
+                   if shortcode and (n.get("code") == shortcode or n.get("shortcode") == shortcode)]
+        text = f"{len(matches)} matching nodes"
+        if matches:
+            text += ": " + "; ".join(_node_summary(n) for n in matches[:3])
+        parts.append(text)
+        return "; ".join(parts)[:400]
+    except Exception:
+        return "page summary unavailable"
+
+
 def extract_media(html_or_json, shortcode: str) -> dict:
     """Extract only media belonging to the exact shortcode from embedded JSON.
 

@@ -248,7 +248,13 @@ temporary signed media URLs are excluded from usage records.
 A media or validation failure latches `media_capture_or_validation_failed`
 after the paid page fetch has already succeeded, so the hold protects against a
 run of useless paid fetches, not against extra spend on that source. The reason
-is kept locally in `downloads/{id}.capture-error.txt`. After reviewing it (and
+is kept locally in `downloads/{id}.capture-error.txt`. That file has two lines:
+the error, and `page: ...`, a one-line summary of the page String returned (its
+size, title, canonical path, JSON block counts and what the matching nodes
+hold; no media URLs). String's page itself is kept as `downloads/{id}.source.json`,
+so the cause can be read offline without another paid request. It is private
+source evidence: `downloads/` is gitignored, and the file is never committed,
+copied or uploaded. After reviewing them (and
 any files already saved), the coordinator may release the hold for that one
 source; the user approved this on 2026-10-07 for queue runs:
 

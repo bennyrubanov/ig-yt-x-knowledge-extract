@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from local_config import downloads_dir, load_local_env
-from string_media import MediaError, canonical_source, download_asset, extract_media, validate_media
+from string_media import MediaError, canonical_source, describe_source, download_asset, extract_media, validate_media
 from string_usage import Ledger, UsageBlocked, recommended_run_budget_usd
 
 API_URL = "https://request.usestring.ai/v1/fetch"
@@ -353,9 +353,17 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         write_json(directory / f"{mid}.public.json", manifest)
         ledger.mark_media(attempt, usable=True)
     except Exception as exc:
+        # The page was fetched and charged: keep it, and say what it was, so the
+        # cause can be read offline without another paid request.
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            write_json(directory / f"{mid}.source.json", {"data": receipt.get("data")})
+        except Exception:
+            pass
         try:
             (directory / f"{mid}.capture-error.txt").write_text(
-                f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                f"{type(exc).__name__}: {exc}\n"
+                f"page: {describe_source(receipt.get('data'), mid)}\n", encoding="utf-8")
         except OSError:
             pass
         ledger.hold("media_capture_or_validation_failed")
