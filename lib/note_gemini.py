@@ -81,12 +81,14 @@ Rules that always hold:
 - Keep the saver's private life out: relationships, family, feelings, health records, legal plans. Replace a private person's name with a role ("a friend"). Public figures and creators keep their names.
 - Summarize in your own words. Quote at most one short phrase (under 15 words) per note.
 - Keep the distinctive numbers and names, written as the material gives them. Never add a number that is not in the material.
-- Mark claims as claims. Flag hype, sponsorship, a sales call to action or weak evidence in one clause.
+- Mark claims as claims. Flag hype, sponsorship, a sales call to action or weak evidence in one clause. A health, diet, supplement, medical, money or price claim always gets one key takeaway starting "Claim, not verified here:" that says what isn't verified (an anecdote, a self-report, a seller's own promotion, a price with no date).
 - Do what the saved prompt asks, in `prompt_answer`: a short evidence-based verdict for "is this true?", the list for "save the brands". With no prompt, say in `prompt_answer` what the note does with the save. Never say anything was filed, added, saved or sent anywhere: the agent that checks your draft does the filing.
-- `tldr` holds only content bullets. Never repeat the "Your prompt" bullet there; the program writes it.
+- `tldr` holds only content bullets. Never repeat the "Your prompt" bullet there; the program writes it. `prompt_answer` is only the answer: don't restate the saved prompt, which the program prints right before it.
 - Facts, names, numbers and dates come only from the material, even ones you know from elsewhere.
+- `author` is the creator exactly as the material or the save's details name them (a handle or a name written there). If neither names the creator, leave `author` empty. Never guess a handle from a name, a voice, a logo or what you know from elsewhere: the program drops an author the material doesn't contain.
+- Write a link only when the material contains it, copied exactly. Never add a [[wikilink]] or a URL from anywhere else: the program adds the source and hub links and removes any other link the material doesn't contain.
 - Add your own critical reading where it helps the reader decide what to believe or do (a selection effect, a small sample, a missing time frame, who profits from the claim), and present it as a caveat, not as something the source said.
-- Choose 1 or 2 topics; add a third only when the source clearly belongs there too.
+- Choose 1 or 2 topics by what the source itself is about; add a third only when the source clearly belongs there too. A project or purpose the saved prompt names (an app, a business, a trip) belongs in `projects`, not in `topics`, unless the source is about that subject.
 - If answering needs something the material does not have (the saver's own projects, a page the source only links to, a recipe it only names), answer what the material supports and say plainly what is missing. Never guess.
 - Plain, concrete English. Each bullet is one or two sentences, with no headings, tables or nested lists inside a field.
 - When the save's details give a saved title instead of a saved prompt, return in `prompt` the exact words the saver typed before the platform's auto-title, or "(none — URL only.)" when the title is just the creator's name or the page's own title.
@@ -358,13 +360,109 @@ def already_filed(vault: Path | None, key: str) -> Path | None:
     return next((p for p in vault.rglob(f"{key}-*.md") if not p.name.startswith("_")), None)
 
 
+def author_name(author: str) -> str:
+    """The name part of an author line: quotes, handles and a trailing (...) removed."""
+    name = str(author).strip().strip('"').strip()
+    name = re.sub(r"\s*\(.*\)\s*$", "", name)
+    return re.sub(r"@[\w.]+", "", name).strip(" ,;-\u2013\u2014")
+
+
+def grounded_author(author: str, sources: str) -> str:
+    """Gemini's author, kept only as far as the material names it.
+
+    Each @handle and each name (outside or inside parentheses, so "@handle (Name)" and
+    "Name (with @handle)" both work) must appear in the material; an author with a part
+    that doesn't is cut back to the parts that do. On 2026-11-03, 31 of 68 drafts had an
+    invented or wrong author or handle."""
+    author, text = one_line(author), sources.lower()
+    if not author:
+        return ""
+    handles = re.findall(r"@[\w.]+", author)
+    found = [h for h in handles
+             if re.search(r"(?<![\w.])" + re.escape(h.lower()) + r"(?![\w]|\.\w)", text)]
+    names = []
+    for segment in re.split(r"[()]", re.sub(r"@[\w.]+", " ", author)):
+        name = re.sub(r"\b(?:with|and|feat\.?|ft\.?|x)\b|&", " ", segment, flags=re.I)
+        name = re.sub(r"\s+", " ", name).strip(" ,;:-/\u2013\u2014")
+        if name:
+            names.append(name)
+    named = [n for n in names if n.lower() in text]
+    if len(found) == len(handles) and len(named) == len(names):
+        return author
+    if found:
+        return f"{found[0]} ({named[0]})" if named else found[0]
+    return named[0] if named else ""
+
+
+MD_LINK = re.compile(r"\[([^\]\n]*)\]\((\S+?)\)")
+WIKI_LINK = re.compile(r"\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]")
+BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]\"']+"
+                      r"|(?<![\w@.-])[a-z0-9][\w-]*\.(?:com|org|net|io|co|app|ai|dev|shop|store|me|tv|in|uk|us)\b(?:/[^\s<>()\[\]\"']*)?",
+                      re.I)
+
+
+def link_in(url: str, sources: str) -> bool:
+    core = re.sub(r"^(?:https?://)?(?:www\.)?", "", url.rstrip(".,;:!?")).rstrip("/").lower()
+    return bool(core) and core in sources.lower()
+
+
+def remove_unsourced_links(data: dict, sources: str) -> int:
+    """Drop links the material doesn't contain from the written fields; return how many.
+
+    On 2026-11-03, 15 of 68 drafts had links that weren't in the source."""
+    removed = 0
+
+    def clean(value: str) -> str:
+        nonlocal removed
+
+        def wiki(m):
+            nonlocal removed
+            removed += 1
+            return (m[2] or m[1].split("/")[-1]).strip()
+
+        def markdown(m):
+            nonlocal removed
+            if link_in(m[2], sources):
+                return m[0]
+            removed += 1
+            return m[1]
+
+        def bare(m):
+            nonlocal removed
+            url = m[0].rstrip(".,;:!?")
+            if link_in(url, sources):
+                return m[0]
+            removed += 1
+            return m[0][len(url):]
+
+        value = MD_LINK.sub(markdown, WIKI_LINK.sub(wiki, value))
+        value = BARE_URL.sub(bare, value)
+        value = re.sub(r"[ \t]{2,}", " ", re.sub(r"\s*\(\s*\)", "", value))
+        return re.sub(r"[ \t]+([.,;:!?])", r"\1", value)
+
+    for field in ("title", "prompt_answer", "tldr", "what_they_said", "key_takeaways", "dissection", "hub_line"):
+        value = data.get(field)
+        if isinstance(value, str):
+            data[field] = clean(value)
+        elif isinstance(value, list):
+            data[field] = [clean(v) if isinstance(v, str) else v for v in value]
+    return removed
+
+
 def related_by_author(vault: Path | None, author: str, key: str, limit: int = 3) -> list[str]:
     if not vault or not vault.is_dir() or not author:
         return []
     handle = re.search(r"@[\w.]+", author)
-    needle = (handle[0] if handle else re.sub(r"\s*\(.*\)$", "", author)).strip().lower()
+    needle = (handle[0] if handle else author_name(author)).strip().lower()
     if len(needle) < 4:
         return []
+    # A handle matches only as a whole handle (@chef isn't @chefjohn) and a name only as
+    # the whole name: on 2026-11-03 loose matches linked unrelated notes.
+    if handle:
+        token = re.compile(r"(?<![\w.])" + re.escape(needle) + r"(?![\w]|\.\w)")
+        same = lambda other: bool(token.search(other.lower()))
+    else:
+        same = lambda other: author_name(other).lower() == needle
     hits = []
     for path in sorted(vault.rglob("*.md")):
         rel = path.relative_to(vault).as_posix()
@@ -376,7 +474,7 @@ def related_by_author(vault: Path | None, author: str, key: str, limit: int = 3)
         except OSError:
             continue
         match = re.search(r"(?m)^author:\s*(.+)$", head)
-        if match and needle in match[1].lower():
+        if match and same(match[1]):
             hits.append(rel[:-3])
             if len(hits) >= limit:
                 break
@@ -484,6 +582,11 @@ class Drafter:
     def write(self, item, data, model, text, cut, named, result) -> dict:
         key = result["key"]
         data["topics"] = [t for t in dict.fromkeys(data.get("topics") or []) if t in self.hubs]
+        details = " ".join([text, *typed_text(item), *(str(p) for p in item.get("prompts") or []),
+                            str(item.get("title", "")), str(item.get("author", "")),
+                            str(item.get("source", "")), str(item.get("saved_url", ""))])
+        data["author"] = grounded_author(data.get("author", ""), details)
+        links_removed = remove_unsourced_links(data, details)
         prompts = explicit_prompts(item)
         if prompts is None:
             guess = one_line(data.get("prompt", ""))
@@ -523,7 +626,7 @@ class Drafter:
         return {**result, "status": "written", "vault_path": note.relative_to(self.out).as_posix(),
                 "title": one_line(data["title"]), "topics": data["topics"], "hub_line": one_line(data["hub_line"]),
                 "projects": data.get("projects") or [], "prompt": prompt, "coverage": coverage, "flags": flags,
-                "unsourced_numbers": unsourced, "stills": [f for f, _ in stills]}
+                "unsourced_numbers": unsourced, "links_removed": links_removed, "stills": [f for f, _ in stills]}
 
 
 def load_items(path: Path) -> list[dict]:
@@ -551,6 +654,8 @@ def status_line(row: dict) -> str:
         bits.append(f"{row['model']} in={usage.get('promptTokenCount', '?')} out={usage.get('candidatesTokenCount', '?')}")
     if row.get("unsourced_numbers"):
         bits.append(f"numbers-to-check={len(row['unsourced_numbers'])}")
+    if row.get("links_removed"):
+        bits.append(f"links-removed={row['links_removed']}")
     return "  ".join(str(b) for b in bits if b)
 
 

@@ -214,6 +214,49 @@ class NoteGeminiTests(unittest.TestCase):
         row = self.drafter([reply(draft_answer())]).draft(self.item)
         self.assertIn("- [[youtube/Zzz999yyy88-another]]", (self.out / row["vault_path"]).read_text())
 
+    def test_same_author_notes_need_the_whole_handle(self):
+        folder = self.out / "youtube"
+        folder.mkdir()
+        (folder / "Zzz999yyy88-other-chef.md").write_text("---\nauthor: \"@chefjohnny\"\n---\n")
+        (folder / "Zzz999yyy77-same-chef.md").write_text("---\nauthor: \"@chefjohn (John)\"\n---\n")
+        item = {**self.item, "author": "@chefjohn"}
+        note = (self.out / self.drafter([reply(draft_answer())]).draft(item)["vault_path"]).read_text()
+        self.assertIn("- [[youtube/Zzz999yyy77-same-chef]]", note)
+        self.assertNotIn("Zzz999yyy88-other-chef", note)
+
+    def test_an_author_the_material_does_not_name_is_dropped(self):
+        item = dict(self.item)
+        del item["author"]
+        answer = draft_answer(author="@made.up (Fake Name)")
+        note = (self.out / self.drafter([reply(answer)]).draft(item)["vault_path"]).read_text()
+        self.assertNotIn("made.up", note)
+        self.assertNotIn("Fake Name", note)
+
+    def test_an_author_handle_the_material_names_is_kept_without_an_invented_name(self):
+        (self.downloads / "Abc123def45.txt").write_text("Posted by @real_handle. Computer science earns "
+                                                        "$115,000 at one school.", encoding="utf-8")
+        item = dict(self.item)
+        del item["author"]
+        answer = draft_answer(author="@real_handle (Invented Name)")
+        note = (self.out / self.drafter([reply(answer)]).draft(item)["vault_path"]).read_text()
+        self.assertIn('author: "@real_handle"', note)
+        self.assertNotIn("Invented Name", note)
+
+    def test_links_the_material_lacks_are_removed(self):
+        (self.downloads / "Abc123def45.txt").write_text("Computer science earns $115,000; the chart is at "
+                                                        "https://real.example/chart.", encoding="utf-8")
+        answer = draft_answer(
+            what_they_said="See [the guide](https://made.up/guide), https://also.fake/x, fakeshop.com and [[Some Note]].",
+            key_takeaways=["The chart is at https://real.example/chart.", "Pick the school by major.",
+                           "About 98% of programs pass.", "Theater barely varies."])
+        row = self.drafter([reply(answer)]).draft(self.item)
+        note = (self.out / row["vault_path"]).read_text()
+        for gone in ("made.up", "also.fake", "fakeshop.com", "[[Some Note]]"):
+            self.assertNotIn(gone, note)
+        for kept in ("the guide", "Some Note", "https://real.example/chart"):
+            self.assertIn(kept, note)
+        self.assertEqual(row["links_removed"], 4)
+
     def test_a_used_up_daily_allowance_skips_that_model_for_the_rest_of_the_run(self):
         drafter = self.drafter([per_day_429(), reply(draft_answer()), reply(draft_answer(slug="second"))], redo=True)
         first = drafter.draft(self.item)
