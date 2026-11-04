@@ -158,6 +158,14 @@ class CaptureTests(unittest.TestCase):
         self.assertIn('title "Login"', lines[1])
         self.assertEqual(len(lines), 2)
 
+    def test_failed_capture_without_page_data_still_latches_hold(self):
+        with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value={"status_code":200,"billed_request_type":"request_standard"}):
+            with self.assertRaises(CaptureStopped) as stopped:
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+        self.assertEqual(str(stopped.exception), "media_capture_or_validation_failed")
+        self.assertEqual(self.ledger.report()["hold_reason"], "media_capture_or_validation_failed")
+        self.assertTrue((self.root / "Test123.capture-error.txt").read_text().splitlines()[1].startswith("page: "))
+
     def test_successful_capture_writes_no_source_json(self):
         media = {"caption": "c", "media": [{"kind": "image", "url": "https://x.fbcdn.net/a.jpg"}]}
         def download(url, dest, max_bytes):

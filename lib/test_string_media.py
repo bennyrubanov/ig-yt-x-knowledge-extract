@@ -280,7 +280,6 @@ class DescribeSourceTests(unittest.TestCase):
                 '</head><script type="application/json">{"a": 1}</script>'
                 '<script type="application/json">{broken</script></html>')
         line = media.describe_source(page, CODE)
-        print("page:", line)
         self.assertIn('title "Login \u2022 Instagram"', line)
         self.assertIn("canonical /accounts/login/;", line)
         self.assertIn("2 JSON blocks (1 unreadable)", line)
@@ -294,7 +293,6 @@ class DescribeSourceTests(unittest.TestCase):
 
     def test_route_parameter_stub(self):
         line = media.describe_source(embedded({"params": {"shortcode": CODE, "other": "v"}}), CODE)
-        print("page:", line)
         self.assertIn("1 matching nodes: no media fields, keys other,shortcode", line)
         self.assertNotIn('"v"', line)
 

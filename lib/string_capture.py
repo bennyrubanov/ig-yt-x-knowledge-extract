@@ -357,13 +357,13 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         # cause can be read offline without another paid request.
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            write_json(directory / f"{mid}.source.json", {"data": receipt["data"]})
+            write_json(directory / f"{mid}.source.json", {"data": receipt.get("data")})
         except Exception:
             pass
         try:
             (directory / f"{mid}.capture-error.txt").write_text(
                 f"{type(exc).__name__}: {exc}\n"
-                f"page: {describe_source(receipt['data'], mid)}\n", encoding="utf-8")
+                f"page: {describe_source(receipt.get('data'), mid)}\n", encoding="utf-8")
         except OSError:
             pass
         ledger.hold("media_capture_or_validation_failed")
