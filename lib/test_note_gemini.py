@@ -166,6 +166,17 @@ class NoteGeminiTests(unittest.TestCase):
         row = self.drafter([reply(draft_answer(prompt="Is this true?"))]).draft(item)
         self.assertEqual(row["prompt"], ng.NO_PROMPT)
 
+    def test_hubs_are_the_vaults_own_when_it_has_hub_folders(self):
+        self.assertIn("decisions", self.drafter([]).hubs)
+        for hub in ("good-info", "wealth"):
+            (self.out / hub).mkdir()
+            (self.out / hub / "_index.md").write_text("# Hub\n", encoding="utf-8")
+        drafter = self.drafter([reply(draft_answer(topics=["decisions", "good-info"]))])
+        self.assertEqual(set(drafter.hubs), {"good-info", "wealth"})
+        self.assertEqual(drafter.schema["properties"]["topics"]["items"]["enum"], drafter.hubs)
+        row = drafter.draft(self.item)
+        self.assertEqual(row["topics"], ["good-info"])
+
     def test_bad_answer_is_retried_then_the_next_model_drafts(self):
         replies = [reply("not json"), reply(draft_answer(topics=["nope"])), reply(draft_answer())]
         row = self.drafter(replies).draft(self.item)

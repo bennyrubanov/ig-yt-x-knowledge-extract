@@ -434,7 +434,12 @@ class Drafter:
     def __init__(self, *, key: str, models, out: Path, vault: Path | None, downloads: Path, run_date: str,
                  max_images: int = 6, redo: bool = False, opener=None, sleep=time.sleep):
         brief, filing = BRIEF.read_text(encoding="utf-8"), FILING.read_text(encoding="utf-8")
-        self.hubs = hubs_from_brief(brief)
+        hubs = hubs_from_brief(brief)
+        present = [h for h in hubs if ((vault or out) / h / "_index.md").is_file()]
+        # A vault with hub folders offers only those. The knowledge vault leaves out
+        # decisions/, which stays in Benny's own vault on the Mac: on 2026-11-04 a note
+        # tagged decisions had no hub index to be listed in. An empty folder offers all.
+        self.hubs = present or hubs
         self.system = system_text(brief, filing)
         self.schema = response_schema(self.hubs)
         self.key, self.models, self.out, self.vault = key, tuple(models), out, vault
