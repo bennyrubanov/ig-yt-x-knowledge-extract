@@ -17,6 +17,8 @@ This is an agent filing convention, not an unattended sync service.
 
 A saved source is deliberate. Assume the owner knows their existing efforts: the save is either a new way to approach one of them or a new idea. Find the related effort in the destination repo, file the item beside it and say what the new angle is; never close a save as already covered.
 
+Lean toward filing. A save the owner sent in goes to every repository it fits, in the same pass. A caveat (evidence, legal, cost, timing) is written beside the filing, never in place of it, and an answer to the owner's prompt leads with what can be done before any limits. When a destination batches its handoffs, a pointer the owner asks for is filed at once, within that repository's own merge limits.
+
 ## Per-source workflow
 
 1. Read the destination repo's instructions and current owners before writing.
