@@ -144,6 +144,30 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(report["estimated_micro"], 300)
         self.assertTrue(report["hold_reason"])
 
+    def test_failed_media_keeps_string_page_and_a_page_summary(self):
+        page = '<html><title>Login</title><script type="application/json">{"a":1}</script></html>'
+        with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value={"status_code":200,"billed_request_type":"request_standard","data":page}):
+            with self.assertRaises(CaptureStopped) as stopped:
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+        self.assertEqual(str(stopped.exception), "media_capture_or_validation_failed")
+        self.assertEqual(self.ledger.report()["hold_reason"], "media_capture_or_validation_failed")
+        self.assertEqual(json.loads((self.root / "Test123.source.json").read_text()), {"data": page})
+        lines = (self.root / "Test123.capture-error.txt").read_text().splitlines()
+        self.assertEqual(lines[0], "MediaError: Exact public source was not found")
+        self.assertTrue(lines[1].startswith("page: "))
+        self.assertIn('title "Login"', lines[1])
+        self.assertEqual(len(lines), 2)
+
+    def test_successful_capture_writes_no_source_json(self):
+        media = {"caption": "c", "media": [{"kind": "image", "url": "https://x.fbcdn.net/a.jpg"}]}
+        def download(url, dest, max_bytes):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"jpg")
+        with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value={"status_code":200,"billed_request_type":"request_standard","data":"html"}), patch("string_capture.extract_media", return_value=media), patch("string_capture.download_asset", side_effect=download), patch("string_capture.validate_media", return_value={"has_image":True}):
+            capture("https://www.instagram.com/p/Test123/", "run", self.ledger, self.root)
+        self.assertFalse(list(self.root.glob("*.source.json")))
+        self.assertFalse(list(self.root.glob("*.capture-error.txt")))
+
     def test_unexpected_media_exception_latches_hold(self):
         with patch("string_capture.api_key", return_value="fake"), patch("string_capture.bounded_fetch_page", return_value={"status_code":200,"billed_request_type":"request_standard","data":"html"}), patch("string_capture.extract_media", side_effect=RecursionError("untrusted")):
             with self.assertRaises(CaptureStopped):

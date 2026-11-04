@@ -273,5 +273,53 @@ class ValidationTests(unittest.TestCase):
                     media.validate_media(path, require_audio=True)
 
 
+class DescribeSourceTests(unittest.TestCase):
+    def test_login_like_page(self):
+        page = ('<html><head><title>  Login \u2022\n Instagram </title>'
+                '<link rel="canonical" href="https://www.instagram.com/accounts/login/?next=%2Freel%2Fx">'
+                '</head><script type="application/json">{"a": 1}</script>'
+                '<script type="application/json">{broken</script></html>')
+        line = media.describe_source(page, CODE)
+        print("page:", line)
+        self.assertIn('title "Login \u2022 Instagram"', line)
+        self.assertIn("canonical /accounts/login/;", line)
+        self.assertIn("2 JSON blocks (1 unreadable)", line)
+        self.assertIn("shortcode occurs 0 times", line)
+        self.assertIn("0 matching nodes", line)
+        self.assertNotIn("next=", line)
+
+    def test_og_url_fallback_and_no_title(self):
+        line = media.describe_source('<meta property="og:url" content="https://x.test/p/a/?q=1#f">', CODE)
+        self.assertIn("title none; canonical /p/a/;", line)
+
+    def test_route_parameter_stub(self):
+        line = media.describe_source(embedded({"params": {"shortcode": CODE, "other": "v"}}), CODE)
+        print("page:", line)
+        self.assertIn("1 matching nodes: no media fields, keys other,shortcode", line)
+        self.assertNotIn('"v"', line)
+
+    def test_carousel_names_slide_without_media(self):
+        node = {"code": CODE, "carousel_media": [{"image_versions2": {"candidates": [{"url": IMAGE}]}},
+                                                  {"pk": 2}, {"video_url": VIDEO}]}
+        line = media.describe_source(embedded({"x": node}), CODE)
+        self.assertIn("carousel 3 slides (no media: 2)", line)
+        self.assertNotIn("token", line)
+        edges = {"shortcode": CODE, "edge_sidecar_to_children": {"edges": [{"node": {"display_url": IMAGE}}]},
+                 "owner": {"is_private": True}}
+        line = media.describe_source(edges, CODE)
+        self.assertIn("carousel 1 slides, private", line)
+
+    def test_dict_input_and_single_media(self):
+        line = media.describe_source({"code": CODE, "video_url": VIDEO}, CODE)
+        self.assertNotIn("title", line)
+        self.assertIn("1 matching nodes: video", line)
+        self.assertNotIn("cdninstagram", line)
+
+    def test_junk_input_never_raises(self):
+        for junk in (None, 5, b"bytes", object()):
+            self.assertIsInstance(media.describe_source(junk, CODE), str)
+        self.assertLessEqual(len(media.describe_source("x" * 5000 + "<title>" + "t" * 900 + "</title>", CODE)), 400)
+
+
 if __name__ == "__main__":
     unittest.main()
