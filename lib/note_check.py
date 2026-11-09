@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import posixpath
 import re
 import sys
@@ -34,6 +35,9 @@ def scoped(root: Path, value: str, base: Path | None = None) -> Path:
         raise ValueError("private or mirror path is outside the filing scope")
     root = root.resolve()
     path = path if path.is_absolute() else (base or root) / path
+    path = Path(os.path.abspath(path))
+    if not path.is_relative_to(root):
+        raise ValueError("path leaves the explicitly supplied vault root")
     path = path.resolve()
     if any(p.casefold() in PRIVATE_PARTS for p in path.parts):
         raise ValueError("private or mirror path is outside the filing scope")
@@ -107,7 +111,7 @@ def links(text: str):
         yield match[1].strip("<>"), "markdown", match[0].startswith("!")
 
 
-def targets(root: Path, note: Path, target: str) -> list[Path]:
+def targets(root: Path, note: Path, target: str, kind: str = "wiki") -> list[Path]:
     target = unquote(target.split("#", 1)[0])
     if not target:
         return [note]
@@ -115,12 +119,21 @@ def targets(root: Path, note: Path, target: str) -> list[Path]:
         raise ValueError("use forward slashes in vault links")
     if target.startswith(("./", "../")):
         bases = [note.parent]
+    elif kind == "markdown":
+        bases = list(dict.fromkeys([note.parent, root]))
     else:
         bases = [root] if "/" in target else [note.parent, root]
     found = []
     for base in bases:
         candidate = scoped(root, target, base)
-        for path in (candidate, candidate.with_name(candidate.name + ".md")):
+        variants = [candidate]
+        if candidate.name:
+            variants.append(candidate.with_name(candidate.name + ".md"))
+        for variant in variants:
+            try:
+                path = scoped(root, str(variant))
+            except ValueError:
+                continue  # an extension probe is never permission to leave root
             if path.is_file() and path not in found:
                 found.append(path)
     return found
@@ -139,12 +152,15 @@ def hub_backlink(text: str, hub: Path, note: Path, root: Path) -> tuple[bool, bo
         if kind == "markdown" and external(target):
             continue
         target = unquote(target.split("#", 1)[0]).removesuffix(".md")
+        relative = posixpath.normpath(hub.parent.relative_to(root).as_posix() + "/" + target)
         if target.startswith(("./", "../")):
-            target = posixpath.normpath(hub.parent.relative_to(root).as_posix() + "/" + target)
+            candidates = [relative]
+        elif kind == "markdown":
+            candidates = [relative, posixpath.normpath(target)]
         else:
-            target = posixpath.normpath(target)
-        if target == expected:
-            return True, False
+            candidates = [posixpath.normpath(target)]
+        if expected in candidates:
+            return True, len(targets(root, hub, target, kind)) > 1
         if target == note.stem:
             return True, True
     return False, False
@@ -228,7 +244,8 @@ def check(root: Path, record: dict, *, reviewed=False, hubs=False, hub_cache=Non
     prompt = props.get("user_question", "")
     if prompt and not str(prompt).startswith("(none"):
         tldr = re.search(r"(?ms)^## TL;DR\s*\n(.*?)(?=^## |\Z)", actual)
-        if not tldr or not re.match(r"\s*[-*] \*\*Your prompt:\*\*", tldr[1]):
+        first = tldr[1].replace("**", "").replace("__", "") if tldr else ""
+        if not re.match(r"\s*[-*]\s+Your prompt:", first):
             errors.append("first TL;DR bullet must answer Your prompt")
     property_links = [v for value in props.values() for v in (value if isinstance(value, list) else [value])
                       if isinstance(v, str) and v.startswith("[[") and v.endswith("]]")]
@@ -237,7 +254,7 @@ def check(root: Path, record: dict, *, reviewed=False, hubs=False, hub_cache=Non
         if kind == "markdown" and external(target):
             continue  # external URLs are not fetched
         try:
-            found = targets(root, note, target)
+            found = targets(root, note, target, kind)
             if not found:
                 message = f"unresolved {kind} link: {target}"
                 path = unquote(target.split("#", 1)[0])
@@ -248,7 +265,7 @@ def check(root: Path, record: dict, *, reviewed=False, hubs=False, hub_cache=Non
             if (embedded or Path(target.split("#", 1)[0]).suffix.lower() in MEDIA_EXTENSIONS) and "downloads" in {p.casefold() for p in Path(unquote(target)).parts}:
                 errors.append("retained media must not link to prunable downloads")
             elif len(found) > 1:
-                warnings.append(f"ambiguous short link; use vault-relative path: {target}")
+                warnings.append(f"ambiguous link; verify resolution or use an unambiguous path: {target}")
         except ValueError as exc:
             errors.append(f"link rejected: {exc}")
     if hubs and isinstance(props.get("topics"), list):
@@ -258,15 +275,20 @@ def check(root: Path, record: dict, *, reviewed=False, hubs=False, hub_cache=Non
                 continue
             try:
                 hub = scoped(root, f"{topic}/_index.md")
+            except ValueError:
+                errors.append("hub path rejected: outside the filing scope")
+                continue
+            hub_label = hub.relative_to(root).as_posix()
+            try:
                 if hub not in hub_cache:
                     hub_cache[hub] = read_text(hub)
                 linked, short = hub_backlink(hub_cache[hub], hub, note, root)
                 if not linked:
-                    errors.append(f"hub {topic}/_index.md has no backlink to this note")
+                    errors.append(f"hub {hub_label} has no backlink to this note")
                 elif short:
-                    warnings.append(f"hub {topic}/_index.md uses a short backlink; verify resolution or use its vault-relative path")
+                    warnings.append(f"hub {hub_label} uses a short or ambiguous backlink; verify resolution or use an unambiguous path")
             except (OSError, ValueError):
-                errors.append(f"hub {topic}/_index.md cannot be checked within scope")
+                errors.append(f"hub {hub_label} cannot be checked within scope")
     return result
 
 

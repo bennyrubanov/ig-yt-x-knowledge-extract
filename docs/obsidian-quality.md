@@ -26,6 +26,8 @@ plugin or provider-specific skill installation is needed.
   the filename. Markdown internal links are also supported; URL-encode spaces.
   Full paths avoid ambiguous short names. In a Markdown table, escape a wikilink's
   alias separator: `[[cooking/sauce-notes\|Sauces]]`.
+  Both vault-relative and note-relative Markdown destinations are supported;
+  ambiguous matches are reported for review.
 - Copy useful images/audio into the existing permanent media folders, then embed
   them using `![[...]]` (including the file extension). Never point a retained-media
   link at prunable `downloads/`, a temporary path or the source's expiring CDN URL.

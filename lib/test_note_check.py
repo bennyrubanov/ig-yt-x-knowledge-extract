@@ -79,11 +79,48 @@ class NoteCheckTests(unittest.TestCase):
         self.hub.write_text(f"# Cooking\n- [Recipe]({self.path})\n")
         self.assertEqual(self.check()["errors"], [])
 
+    def test_markdown_folder_relative_image_is_supported(self):
+        self.path = "cooking/Abc-test.md"
+        self.note = self.root / self.path
+        image = self.root / "cooking/assets/photo.png"
+        image.parent.mkdir()
+        image.write_bytes(b"fixture")
+        self.hub.write_text(f"# Cooking\n- [[{self.path[:-3]}]]\n")
+        self.write(body=self.body + "\n![](assets/photo.png)\n")
+        self.assertEqual(self.check()["errors"], [])
+
+    def test_markdown_folder_relative_hub_backlink_is_supported(self):
+        self.path = "cooking/notes/Abc-test.md"
+        self.note = self.root / self.path
+        self.note.parent.mkdir()
+        self.hub.write_text("# Cooking\n- [Recipe](notes/Abc-test.md)\n")
+        self.write()
+        self.assertEqual(self.check()["errors"], [])
+        self.assertEqual(self.check()["warnings"], [])
+        other = self.root / "notes/Abc-test.md"
+        other.parent.mkdir()
+        other.write_text("# Other same-named note\n")
+        self.assertEqual(len(self.check()["warnings"]), 1)
+
     def test_private_and_outside_links_are_rejected(self):
         self.write(body=self.body + "\n[[Private Notes/never-read]]\n[Outside](../../../outside.md)\n")
         errors = " ".join(self.check()["errors"])
         self.assertIn("private or mirror path", errors)
         self.assertIn("leaves the explicitly supplied vault", errors)
+
+    def test_extension_probe_never_inspects_a_sibling_outside_root(self):
+        outside = self.root.with_name(self.root.name + ".md")
+        outside.write_text("synthetic outside file")
+        original = Path.is_file
+        probes = []
+        def guarded(path):
+            self.assertTrue(path.is_relative_to(self.root), str(path))
+            probes.append(path)
+            return original(path)
+        with patch.object(Path, "is_file", guarded):
+            nc.targets(self.root, self.note, ".")
+            nc.targets(self.root, self.note, str(self.root))
+        self.assertNotIn(outside, probes)
 
     def test_symlink_escape_is_rejected_without_reading_target(self):
         outside = Path(self.tmp.name) / "outside.md"
@@ -109,6 +146,12 @@ class NoteCheckTests(unittest.TestCase):
         errors = " ".join(self.check()["errors"])
         self.assertIn("status must be reviewed", errors)
         self.assertIn("Your prompt", errors)
+
+    def test_prompt_prefix_accepts_plain_or_bold_styling(self):
+        self.write(body=self.body.replace("**Your prompt:**", "Your prompt:"))
+        self.assertEqual(self.check()["errors"], [])
+        self.write(body=self.body.replace("**Your prompt:**", "**Your prompt**:"))
+        self.assertEqual(self.check()["errors"], [])
 
     def test_wrong_source_identity_and_missing_provenance(self):
         self.write({**self.props, "media_id": "wrong", "notion_page_id": 123, "added_at": "not-a-date"})
@@ -170,6 +213,14 @@ class NoteCheckTests(unittest.TestCase):
         with patch.object(Path, "read_text", side_effect=AssertionError("must not read")):
             result = nc.check(self.root, {"vault_path": "Private Notes/Sensitive-title.md"})
         self.assertNotIn("Sensitive-title", json.dumps(result))
+        self.assertTrue(result["errors"])
+
+    def test_rejected_topic_names_are_not_copied_into_report(self):
+        self.write({**self.props, "topics": ["Private Notes/Sensitive-topic", "../../Outside-topic"]})
+        result = self.check()
+        report = json.dumps(result)
+        self.assertNotIn("Sensitive-topic", report)
+        self.assertNotIn("Outside-topic", report)
         self.assertTrue(result["errors"])
 
     def test_cli_checks_jsonl_and_counts_blocked_rows_separately(self):
