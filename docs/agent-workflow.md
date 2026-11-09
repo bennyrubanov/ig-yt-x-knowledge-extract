@@ -592,3 +592,85 @@ Notes from planning the queue on a cloud machine instead of the owner's computer
 String secret routing and anonymous CDN egress are separate explicit choices; a configured placeholder alone does not prove access. Keep the personal-account hold, original charges and exact-source no-refetch guards intact. An explicitly authorized, one-time transport recovery can reuse a hash-bound retained page without another provider request. Detailed setup and limits: [public capture](public-capture.md), [managed media transport](public-capture.md#managed-cloud-media-transport) and [transport recovery](public-capture.md#explicit-cloud-transport-recovery).
 
 Failure handlers must record the intended hold before raising, including carousel soundtrack rechecks. Test the exception path: an undefined variable there passed the success-path suite but skipped the hold. The regression check now verifies that one failed download records its hold, prevents another fetch and preserves the original charge, manifest and photos.
+
+## Cloud queue review and recovery lessons (2026-11-09)
+
+### Resume and parallel ownership
+
+After a runtime restart or usage interruption, inspect live capture, processing and
+Gemini jobs, locks and the live ledger before relaunching anything. The database
+can be newer than its last pushed snapshot: never replace it with an older copy.
+Use SQLite's backup API for a consistent, immutable checkpoint while the single
+provider coordinator retains its live database. Preserve attempts, charges and
+holds; a new bounded run is not permission to retry an attempted source. Report
+price-list settlement, portal-displayed amounts (including precision), unknown
+charges and reservations separately under the existing [billing rules](public-capture.md).
+
+Assign reviewers disjoint source-ID shards with exact saved rows/prompts,
+normalized captions/transcripts, selected local frames and Gemini draft/results.
+They make no source requests and do not mutate the ledger, Notion, shared hubs or
+project files. For receipt-only review, return reviewed Markdown, relative paths
+and hashed media-copy pointers. The integration owner treats these as data,
+checks scope/hashes and materializes only task-owned paths. Do not rerun a rejected
+reviewer write with broader permissions.
+
+Use one bounded, locked local-processing pool with active source IDs, child PIDs
+and logs for restart adoption. A failed handoff inspection must stop the handoff,
+not fall through into launching another coordinator. Preserve in-flight children
+and one owner of processing receipts. Duplicate local-processing records are not
+proof of duplicate provider requests: retain the audit and count unique sources
+and ledger attempts separately.
+
+### Public media and complete coverage
+
+Try ordinary permitted public reading before metered recovery. Logged-out public
+pages or official embeds can expose an attachment absent from search indexes.
+Use the inherited proxy/CA and existing anonymous host/redirect guards; never use
+cookies, account automation or identity rotation to defeat a gate.
+
+Measure the attachment rather than adopting its caption's duration. An excerpt
+is not the complete talk. Distinctive phrase anchors against official captions
+and a consistent time mapping can establish its source and boundaries; local ASR
+timestamps remain approximate. Keep sections outside the attachment out of its
+extraction unless separately requested.
+
+HTTP 200 and Gemini's `STOP` are not proof of coverage: a complete audio input once
+produced an invented early ending. Compare the beginning, internal transitions
+and end against retained evidence, reject unmatched material, and use contiguous
+intervals with absolute offsets for chunked processing. Never claim listening
+when audio input is unsupported; retain the audio and state the unperformed
+musical judgments.
+
+Pass the designated free-key variable explicitly with `--key-env` on every
+Gemini command. Record tier evidence separately from functional success and
+returned model/token totals; honor billing stops and never borrow a billed key.
+A durable source-specific failed/blocked draft can leave other unattempted items
+processable: distinguish exit 3 from configuration/billing stops, skip handled
+keys, and stop if no durable progress was recorded. Agent fallback requires
+sufficient retained evidence.
+
+### Diagnose and deliver from evidence
+
+A large HTTP 200 Instagram page may contain routing references but no exact-source
+media. Record sanitized byte counts, matching-node counts and diagnostics; status
+or size alone does not establish private/deleted content. Keep raw responses and
+signed media URLs local. For an exact-source wrapper, inspect field presence and
+public-branch nullness before proposing parser recovery. A null
+`if_not_gated_logged_out` with an explicit restricted `gating_ruling` is not a
+recovery opportunity. A synthetic fixture is not evidence that an actual failed
+capture contains public media. Do not loosen guards or hand-edit the ledger.
+
+Distinguish creator copy from genuine saved prompts and preserve every duplicate
+row's exact URL/date/page ID and prompt/answer pair. Inspect visual details when
+OCR is weak. An external free recipe card linked by the retained source can be
+read normally without a comment, DM, signup or another Instagram request; keep
+caption/speech discrepancies and missing quantities explicit.
+
+Before marking, verify published notes/hubs, persistent media and actual required
+project delivery. Prepared files are not merged handoffs. Keep inaccessible or
+long follow-ups separate from ready sources, consolidating destination and
+technical-journal PRs per the run's batching instructions. Run the
+[scoped filing check](obsidian-filing.md) only on current ready records after
+writers finish; fix errors and rerun changed records, classify reference warnings,
+and save its JSON report/tool commit. It supplements source, prompt, privacy and
+media review. Journal first, then read back intended changes and preserved context.
