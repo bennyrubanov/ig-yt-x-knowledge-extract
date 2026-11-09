@@ -325,6 +325,66 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(CaptureStopped, "needs_https_proxy"):
                 api_key()
 
+    def test_managed_secret_proxy_preserves_placeholder_and_fixed_endpoints(self):
+        env = {"STRING_AI_API_KEY": "generated-test-placeholder",
+               "STRING_USE_HTTPS_PROXY": "1", "HTTPS_PROXY": "http://127.0.0.1:9"}
+        with patch.dict("os.environ", env, clear=True):
+            key = api_key()
+            self.assertEqual(key, "generated-test-placeholder")
+            for endpoint, call in (
+                ("https://request.usestring.ai/v1/fetch",
+                 lambda: fetch_page("https://www.instagram.com/reel/Test123/", key)),
+                ("https://request.usestring.ai/v1/sitemap", lambda: check_access(key)),
+            ):
+                with patch("string_capture.urllib.request.build_opener") as make:
+                    make.return_value.open.return_value = Response(
+                        json.dumps({"statusCode": 200, "data": "html"}).encode())
+                    call()
+                    self.assertEqual(make.call_args.args[0].proxies,
+                                     {"https": "http://127.0.0.1:9"})
+                    self.assertIsNone(make.call_args.args[1].redirect_request(
+                        None, None, 302, "redirect", {}, "https://example.com/"))
+                    request = make.return_value.open.call_args.args[0]
+                    self.assertEqual(request.full_url, endpoint)
+                    self.assertEqual(request.get_header("Authorization"),
+                                     "Bearer generated-test-placeholder")
+
+    def test_managed_proxy_requires_key_proxy_and_valid_option_before_reserving(self):
+        for env, reason in (
+            ({"STRING_USE_HTTPS_PROXY": "1", "HTTPS_PROXY": "http://127.0.0.1:9"},
+             "missing_string_api_key"),
+            ({"STRING_USE_HTTPS_PROXY": "1", "STRING_AI_API_KEY": "placeholder"},
+             "needs_https_proxy"),
+            ({"STRING_USE_HTTPS_PROXY": "yes", "STRING_AI_API_KEY": "placeholder"},
+             "invalid_string_use_https_proxy"),
+        ):
+            with patch.dict("os.environ", env, clear=True), \
+                    patch("string_capture.bounded_fetch_page") as fetch:
+                with self.assertRaisesRegex(CaptureStopped, reason):
+                    capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+                fetch.assert_not_called()
+        self.assertEqual(self.ledger.report()["attempt_count"], 0)
+
+    def test_managed_proxy_requires_passing_access_check_before_paid_capture(self):
+        env = {"STRING_AI_API_KEY": "generated-test-placeholder",
+               "STRING_USE_HTTPS_PROXY": "1", "HTTPS_PROXY": "http://127.0.0.1:9"}
+        with patch.dict("os.environ", env, clear=True), \
+                patch("string_capture.bounded_fetch_page") as fetch:
+            for status in (None, 401):
+                if status:
+                    self.ledger.record_access_check(status, run_id="run")
+                with self.assertRaisesRegex(CaptureStopped, "string_access_check_required"):
+                    capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+                fetch.assert_not_called()
+            self.assertEqual(self.ledger.report()["attempt_count"], 0)
+            self.ledger.record_access_check(200, run_id="run")
+            fetch.return_value = {"status_code": 503, "error": "provider_http_error"}
+            with self.assertRaises(CaptureStopped):
+                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
+            self.assertEqual(fetch.call_args.args[1], "generated-test-placeholder")
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(self.ledger.report()["attempt_count"], 1)
+
     def test_proxy_injected_capture_needs_a_passing_check_before_reserving(self):
         with patch("string_capture.api_key", return_value="proxy-injected"), \
                 patch("string_capture.bounded_fetch_page") as fetch:
