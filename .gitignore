@@ -18,6 +18,7 @@ notion.env
 *.webp
 *.png
 *.txt
+!requirements-filing.txt
 !lib/whisper-hotwords.txt
 !wanted-collections.example.txt
 *.log

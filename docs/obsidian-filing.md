@@ -4,6 +4,10 @@ Agents write **knowledge notes** here. Tooling, scripts, and extraction workflow
 
 **Vault root:** `OBSIDIAN_VAULT` (or `local.env`). Knowledge only.
 
+Before a source is marked filed, use the batch-only
+[Obsidian quality gate](obsidian-quality.md) for properties, links, permanent
+attachments and hub backlinks. Content review and privacy checks still apply.
+
 If the vault is itself a git repository, agents only write files there: no commit, pull or push. Whatever syncs the vault owns its history.
 
 Other agents may read the vault (for example through a private repo), so notes stay about the saved sources. Leave the user's private life out of them: relationships, family, feelings, health records and legal plans. Put personal context in the run report instead.

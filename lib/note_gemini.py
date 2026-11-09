@@ -490,7 +490,7 @@ def render(item: dict, data: dict, *, prompt: str, folder: str, model: str, run_
     tags = [PLATFORM_TAG.get(kind, kind), hubs[0]]
     for tag in data.get("tags") or []:
         tag = kebab(tag, 5)
-        if tag and tag not in tags and len(tags) < 6:
+        if tag and not tag.isdecimal() and tag not in tags and len(tags) < 6:
             tags.append(tag)
     front = [
         "---",

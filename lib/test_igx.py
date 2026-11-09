@@ -25,6 +25,13 @@ class IgxTests(unittest.TestCase):
         for cmd in ("reel", "carousel", "youtube", "twitter", "batch", "reextract", "cleanup"):
             self.assertIn(cmd, combined)
 
+    def test_note_check_dispatches_without_capture_or_credentials(self) -> None:
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts/igx.py"), "note-check", "--help"],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--vault", proc.stdout)
+        self.assertIn("--require-hub-links", proc.stdout)
+
     def test_unknown_command_exits_2(self) -> None:
         proc = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "igx.py"), "not-a-command"],

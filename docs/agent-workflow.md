@@ -31,6 +31,15 @@ Cross-ref: [AGENTS.md](../AGENTS.md) (entry point), [README.md](../README.md) (s
 
 The built-in local tools require no paid APIs. The optional [String public-capture adapter](public-capture.md) has separately metered service charges. Scripts already warn if `ollama ps` shows a loaded model.
 
+**Obsidian filing lesson (2026-11-10):** the reviewed
+`kepano/obsidian-skills` practices now feed the existing templates and the offline
+[`note-check` gate](obsidian-quality.md), once per ready batch before Notion marking.
+Check actual copied media and hub backlinks, not just whether a note was written.
+Keep file validation distinct from content review and an Obsidian render check.
+Official Obsidian docs allow Markdown internal links and digit-prefixed tags with
+non-numerical characters; do not turn upstream examples into stricter rules.
+No default-vault CLI, new plugin, full-vault scan or Private Notes access is needed.
+
 **Carousel music lesson (2026-09-30):** photo posts may place their attached song
 under `music_metadata.music_info`, not the reel-only `clips_metadata` field. Check
 both on the exact post. The corrected parser still found no song credit or audio

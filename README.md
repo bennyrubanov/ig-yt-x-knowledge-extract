@@ -59,6 +59,7 @@ python scripts/igx.py twitter 'https://x.com/user/status/…'
 python scripts/igx.py batch URL1 URL2          # --workers 1; Instagram safety guard applies; --jsonl FILE
 python scripts/igx.py status --jsonl FILE
 python scripts/igx.py reextract SHORTCODE --frame-interval 1
+python scripts/igx.py note-check --vault "$KNOWLEDGE_ROOT" --results review.jsonl --require-reviewed --require-hub-links
 ```
 
 Unix aliases (same flags): `transcribe-reel.sh`, `transcribe-carousel.sh`, `transcribe-youtube.sh`, `transcribe-twitter.sh`, `transcribe-batch.sh`, `extract-status.sh`, `reextract-frames.sh`.
@@ -97,6 +98,7 @@ Optional paste-inbox (Notion or any URL list): this repo does not include a host
 | [docs/paste-inbox.md](docs/paste-inbox.md) | Optional URL queue + ping (not this repo) |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Extraction steps, failures |
 | [docs/obsidian-filing.md](docs/obsidian-filing.md) | Where notes go |
+| [docs/obsidian-quality.md](docs/obsidian-quality.md) | Offline batch check before filing; parser setup and scope |
 | [docs/batch-briefing.md](docs/batch-briefing.md) | After a large queue |
 | [docs/storage-retention.md](docs/storage-retention.md) | Prune downloads |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | How to park work (local list is `BACKLOG.local.md`) |
