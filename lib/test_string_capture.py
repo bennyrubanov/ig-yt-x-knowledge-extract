@@ -72,6 +72,36 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(manifest.read_bytes(), before)
         self.assertEqual((self.root / "slide.jpg").read_bytes(), b"original photo")
 
+    def test_soundtrack_download_failure_holds_without_retry_or_charge_rewrite(self):
+        manifest = self.soundtrack_fixture()
+        before = manifest.read_bytes()
+        original = self.ledger.report("run")["attempt_records"][0]
+        response = {"status_code": 200, "billed_request_type": "request_premium", "data": {
+            "code": "Test123", "display_url": "https://a.fbcdn.net/photo.jpg",
+            "music_metadata": {"music_info": {"music_asset_info": {
+                "progressive_download_url": "https://a.fbcdn.net/audio.mp4"}}}}}
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page", return_value=response) as fetch, patch(
+                "string_capture.download_asset", side_effect=OSError("offline media failure")) as download, patch(
+                "string_capture.validate_media") as validate:
+            with self.assertRaisesRegex(CaptureStopped, "media_capture_or_validation_failed"):
+                soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+            with self.assertRaises(UsageBlocked):
+                soundtrack_recheck(manifest, "music", self.ledger, self.root / "check")
+            fetch.assert_called_once()
+            download.assert_called_once()
+            validate.assert_not_called()
+        self.assertEqual(self.ledger.report()["hold_reason"], "media_capture_or_validation_failed")
+        child = self.ledger.report("music")["attempt_records"][0]
+        self.assertEqual(child["recovery_of"], original["attempt_id"])
+        self.assertEqual(child["status_code"], 200)
+        self.assertEqual(child["estimate_micro"], 3000)
+        self.assertFalse(child["usable_media"])
+        self.assertFalse(child["filed"])
+        self.assertEqual(self.ledger.report("run")["attempt_records"][0], original)
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertEqual((self.root / "slide.jpg").read_bytes(), b"original photo")
+
     def test_soundtrack_absence_is_recorded_without_retries_or_false_completion(self):
         manifest = self.soundtrack_fixture()
         response = {"status_code": 200, "billed_request_type": "request_premium",

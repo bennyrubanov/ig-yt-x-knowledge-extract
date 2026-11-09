@@ -295,10 +295,7 @@ def soundtrack_recheck(manifest_path: Path, run: str, ledger: Ledger,
             result["remaining"] = "No public soundtrack asset exposed; user audio still missing"
         write_json(output_dir / f"{mid}.soundtrack-check.json", result)
     except Exception:
-        if hold_attempt is None:
-            ledger.hold("media_capture_or_validation_failed")
-        else:
-            ledger.hold_retained_transport_failure(hold_attempt)
+        ledger.hold("media_capture_or_validation_failed")
         raise CaptureStopped("media_capture_or_validation_failed") from None
     return dict(result, usage=ledger.report(run))
 
