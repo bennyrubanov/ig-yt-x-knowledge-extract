@@ -26,6 +26,10 @@ note, then append one JSON result line. Nothing else.
   Never paste transcripts or article text.
 - If the material is missing, empty or clearly the wrong source, do not invent a note:
   write the result line with `"status": "blocked"` and the reason.
+- Follow [Obsidian formatting and link rules](obsidian-quality.md): flat typed
+  properties, unambiguous vault-relative links and permanent media embeds. The
+  coordinator runs `note-check` once after review and hub updates; writers still
+  do not edit hubs or unrelated notes.
 
 Other writers run at the same time. If you write a helper script, give it your slice
 name (for example `/tmp/writer-<slice>-append.py`) so you never overwrite another writer's file,

@@ -145,6 +145,13 @@ class NoteGeminiTests(unittest.TestCase):
             self.assertNotIn(private, body)
         self.assertEqual(self.requests[0].headers.get("X-goog-api-key"), "secret-key")
 
+    def test_tags_omit_numbers_only_but_keep_digit_prefixed_words(self):
+        row = self.drafter([reply(draft_answer(tags=["1984", "3d-modeling"]))]).draft(self.item)
+        note = (self.out / row["vault_path"]).read_text()
+        tags = next(line for line in note.splitlines() if line.startswith("tags: "))
+        self.assertNotIn('"1984"', tags)
+        self.assertIn('"3d-modeling"', tags)
+
     def test_a_prompt_from_a_title_must_be_the_typed_words(self):
         item = {**self.item, "title": "Is this true? The Paper on YouTube"}
         del item["prompts"]
