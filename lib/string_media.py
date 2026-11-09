@@ -407,7 +407,18 @@ def download_asset(url: str, dest: str | Path, max_bytes: int = MAX_ASSET_BYTES)
     if not expected_type or not isinstance(max_bytes, int) or max_bytes <= 0:
         raise MediaError("Invalid media destination or byte limit")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    opener = build_opener(ProxyHandler({}), HTTPSHandler(), HTTPHandler(), _NoRedirect())
+    # Managed Cloud requires its inherited egress proxy; this is explicit routing,
+    # never a fallback after a CDN refusal and never a rotating proxy.
+    option = os.environ.get("STRING_MEDIA_USE_HTTPS_PROXY", "").strip()
+    if option not in {"", "0", "1"}:
+        raise MediaError("Invalid managed media proxy option")
+    proxies = {}
+    if option == "1":
+        proxy = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "").strip()
+        if not proxy:
+            raise MediaError("Managed media routing requires HTTPS_PROXY")
+        proxies = {"https": proxy}
+    opener = build_opener(ProxyHandler(proxies), HTTPSHandler(), HTTPHandler(), _NoRedirect())
     request = Request(url, headers={"Accept": expected_type + "*"}, method="GET")
     part = None
     try:

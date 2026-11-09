@@ -22,7 +22,7 @@ The credential must already exist; these commands create no account or key.
 `STRING_AI_API_KEY=proxy-injected`. Calls to String's API then go through
 `HTTPS_PROXY`, which replaces the placeholder with the real key; otherwise they go
 direct, and the proxy never sees them. With any other placeholder, String answers 401.
-Instagram CDN downloads never use a proxy in either mode, and String fetches the page
+Instagram CDN downloads use their separate anonymous transport (see managed Cloud media transport below); and String fetches the page
 from its own network, so the mode changes nothing Instagram sees. In this mode `fetch`
 refuses to reserve anything until a key check has passed since the run was created:
 
@@ -42,7 +42,7 @@ The host must also be permitted by the environment's network allowlist. A missin
 key or proxy stops before any reservation, and paid capture requires a passing
 free `check-access --run ...` for that run, just as in `proxy-injected` mode.
 The setting is inherited by the fetch worker. Instagram media downloads retain
-their separate anonymous, no-proxy client and host/redirect/validation guards.
+their separate anonymous client and host/redirect/validation guards.
 Never copy a secret into the command, a file or a repository. A configured
 placeholder alone does not establish that credential substitution works: verify
 `check-access` before fetching. Leave this option unset (or `0`) for direct-key
@@ -399,7 +399,7 @@ and its charge stay in history.
 
 One public page fetch must return an exact shortcode match. Related/recommended
 posts do not count. Only expected HTTPS Instagram CDN hosts may supply assets;
-downloads use no Cookie/Authorization headers, no proxy environment, no
+downloads use no Cookie/Authorization headers, no automatic proxy fallback, no
 redirects and no retries. Size limits, content type, duration, required audio
 and full decoding are checked before a capture manifest is finalized. A reel
 thumbnail alone cannot pass. ffprobe/ffmpeg validation only allows local file
@@ -435,3 +435,13 @@ references are verified. Record the note against the ledger attempt with
 At each batch boundary report requests, estimates/unknowns, usable captures,
 completed notes and remaining items. At the end reconcile both usage ledgers
 and the account portal. Never call an incomplete queue cleared.
+
+### Managed Cloud media transport
+
+When direct public CDN TCP access is unavailable but inherited managed egress works,
+set `STRING_MEDIA_USE_HTTPS_PROXY=1` before starting an unattempted source. This uses
+only inherited `HTTPS_PROXY` for the already host-validated anonymous HTTPS media
+request. It adds no account credentials, allows no redirects or retries, and retains
+all size, content and decode checks. It is managed network transport, not proxy
+rotation or a fallback after an Instagram refusal. Default media routing stays direct.
+A source already attempted is never retried to test this setting.
