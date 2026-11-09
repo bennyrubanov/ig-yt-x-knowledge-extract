@@ -160,6 +160,25 @@ class DownloadTests(unittest.TestCase):
             self.assertIsInstance(build.call_args.args[0], media.ProxyHandler)
             self.assertEqual(build.call_args.args[0].proxies, {})
 
+    def test_explicit_managed_media_routing_keeps_anonymous_guards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "a.mp4"
+            opener = Mock()
+            opener.open.return_value = FakeResponse(body=b"video", length=5)
+            env = {"STRING_MEDIA_USE_HTTPS_PROXY": "1", "HTTPS_PROXY": "http://127.0.0.1:9"}
+            with patch.dict("os.environ", env, clear=True), patch.object(media, "build_opener", return_value=opener) as build:
+                media.download_asset(VIDEO, dest)
+            self.assertEqual(build.call_args.args[0].proxies, {"https": env["HTTPS_PROXY"]})
+            self.assertEqual(opener.open.call_count, 1)
+            self.assertEqual(set(opener.open.call_args.args[0].headers), {"Accept"})
+            with self.assertRaises(media.MediaError):
+                build.call_args.args[-1].redirect_request(None, None, 302, "Found", {}, "https://evil.invalid/")
+            for env in ({"STRING_MEDIA_USE_HTTPS_PROXY": "yes"}, {"STRING_MEDIA_USE_HTTPS_PROXY": "1"}):
+                with patch.dict("os.environ", env, clear=True), patch.object(media, "build_opener") as build:
+                    with self.assertRaises(media.MediaError):
+                        media.download_asset(VIDEO, dest)
+                    build.assert_not_called()
+
     def test_audio_mp4_container_type_is_allowed_but_html_is_not(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "reference.m4a"
