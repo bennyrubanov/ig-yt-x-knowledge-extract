@@ -180,6 +180,14 @@ class Ledger:
                     source_url TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
                     user_direction TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS transport_recoveries (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id), at REAL NOT NULL,
+                    source_url TEXT NOT NULL, user_direction TEXT NOT NULL,
+                    evidence_sha256 TEXT NOT NULL, mode TEXT NOT NULL,
+                    prior_status INTEGER NOT NULL, prior_actual_micro INTEGER NOT NULL,
+                    used_at REAL, child_attempt_id INTEGER REFERENCES attempts(attempt_id)
+                );
                 CREATE TABLE IF NOT EXISTS capture_retries (
                     parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id), at REAL NOT NULL,
@@ -385,6 +393,9 @@ class Ledger:
                                       and recheck["source_url"] == recovery_source_url)
                 retry_allowed = (retry and retry["parent_attempt_id"] == recovery_of
                                  and retry["source_url"] == recovery_source_url)
+                transport = db.execute("SELECT * FROM transport_recoveries WHERE parent_attempt_id=? AND run_id=?", (recovery_of,run_id)).fetchone()
+                transport_allowed = bool(transport and transport["mode"] == "paid" and transport["used_at"] is None
+                                         and transport["source_url"] == recovery_source_url and retry_allowed)
                 # A source String refused as unauthenticated was never fetched; the
                 # reviewed release allows it one more request, in any later run.
                 source_match = (_SOURCE_URL.fullmatch(recovery_source_url)
@@ -397,7 +408,7 @@ class Ledger:
                                        or auth_retry_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
                         or not (auth_retry_allowed
-                                or (parent_source and parent_source[0] == recovery_source_url))
+                                or transport_allowed or (parent_source and parent_source[0] == recovery_source_url))
                         or parent["recovery_of"] is not None
                         or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
                     raise UsageBlocked("recovery_not_authorized_or_already_used")
@@ -430,6 +441,8 @@ class Ledger:
             self._event(db, "soundtrack_recheck_reserved" if recheck else
                         "capture_retry_reserved" if retry else
                         "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
+            if recovery_of is not None:
+                db.execute("UPDATE transport_recoveries SET used_at=?,child_attempt_id=? WHERE parent_attempt_id=? AND run_id=? AND mode='paid'", (now,attempt_id,recovery_of,run_id))
             return attempt_id
 
     def authorize_soundtrack_recheck(self, run_id: str, parent_attempt_id: int,
@@ -514,6 +527,7 @@ class Ledger:
                     or rec["source_url"] != source_url or parent["actual_micro"] != rec["actual_micro"]):
                 raise UsageBlocked("capture_retry_requires_reviewed_failed_media_and_empty_one_request_run")
             if (db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (parent_attempt_id,)).fetchone()
+                    or db.execute("SELECT 1 FROM transport_recoveries WHERE parent_attempt_id=?", (parent_attempt_id,)).fetchone()
                     or db.execute("SELECT 1 FROM capture_retries WHERE parent_attempt_id=? OR run_id=?",
                                   (parent_attempt_id, run_id)).fetchone()
                     or db.execute("SELECT 1 FROM soundtrack_rechecks WHERE run_id=?", (run_id,)).fetchone()):
@@ -522,6 +536,71 @@ class Ledger:
                        (parent_attempt_id, run_id, self._clock(), source_url, user_direction))
             self._event(db, "user_directed_capture_retry_authorized", run_id, parent_attempt_id)
         return self.report(run_id)
+
+    def authorize_transport_recovery(self, run_id, parent_attempt_id, source_url, user_direction, evidence_path):
+        """Explicit exact-source recovery of settled Cloud transport failures only."""
+        run_id = _token(run_id, "run_id")
+        if not isinstance(user_direction,str) or not 12 <= len(user_direction) <= 500 or any(ord(c)<32 for c in user_direction):
+            raise ValueError("explicit printable user_direction required")
+        if not isinstance(parent_attempt_id,int) or isinstance(parent_attempt_id,bool) or parent_attempt_id < 1:
+            raise ValueError("positive parent_attempt_id required")
+        match = _SOURCE_URL.fullmatch(source_url) if isinstance(source_url,str) else None
+        raw = Path(evidence_path).read_bytes(); evidence = json.loads(raw); mode = evidence.get("mode")
+        if (not match or evidence.get("attempt_id") != parent_attempt_id or evidence.get("source_url") != source_url
+                or evidence.get("user_direction") != user_direction or evidence.get("transport_fix_reviewed") is not True
+                or not re.fullmatch(r"[0-9a-f]{40}",str(evidence.get("transport_fix_commit",""))) or mode not in {"paid","retained"}):
+            raise UsageBlocked("transport_recovery_evidence_mismatch_or_unreviewed_fix")
+        if mode == "retained" and not re.fullmatch(r"[0-9a-f]{64}",str(evidence.get("retained_page_sha256",""))):
+            raise UsageBlocked("retained_page_hash_required")
+        with self._write() as db:
+            if db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]:
+                raise UsageBlocked("transport_recovery_global_hold")
+            if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL OR actual_micro IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("unreconciled_actual_charge")
+            run = db.execute("SELECT * FROM runs WHERE run_id=?",(run_id,)).fetchone()
+            parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?",(parent_attempt_id,)).fetchone()
+            if (not run or run["max_requests"] != 1 or db.execute("SELECT 1 FROM attempts WHERE run_id=?",(run_id,)).fetchone()
+                    or not parent or parent["source_id"] != match[1] or parent["source_host"] != "www.instagram.com"
+                    or parent["recovery_of"] is not None or parent["usable_media"]):
+                raise UsageBlocked("transport_recovery_requires_exact_failed_original_and_empty_one_request_run")
+            if (db.execute("SELECT 1 FROM transport_recoveries WHERE parent_attempt_id=? OR run_id=?",(parent_attempt_id,run_id)).fetchone()
+                    or db.execute("SELECT 1 FROM capture_retries WHERE parent_attempt_id=? OR run_id=?",(parent_attempt_id,run_id)).fetchone()
+                    or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?",(parent_attempt_id,)).fetchone()):
+                raise UsageBlocked("transport_recovery_already_authorized_or_used")
+            if mode == "paid":
+                eligible = (parent["status_code"] == 0 and parent["billing_class"] is None and parent["actual_source"] == "unattended_max" and parent["actual_micro"] == parent["reserve_micro"])
+            else:
+                settled = db.execute("SELECT * FROM price_list_settlements WHERE attempt_id=?",(parent_attempt_id,)).fetchone()
+                eligible = (parent["status_code"] == 200 and not parent["error_code"] and settled
+                            and parent["billing_class"] in STARTER_MICRODOLLARS and parent["actual_source"] == "price_list" and parent["actual_micro"] == settled["actual_micro"])
+            if not eligible: raise UsageBlocked("transport_recovery_category_or_settlement_not_eligible")
+            check = db.execute("SELECT code,at FROM events WHERE run_id=? AND code IN ('access_check_ok','access_check_failed') ORDER BY event_id DESC LIMIT 1",(run_id,)).fetchone()
+            if not check or check["code"] != "access_check_ok" or self._clock()-check["at"] > ACCESS_CHECK_FRESH_SECONDS:
+                raise UsageBlocked("fresh_passing_access_check_required")
+            if mode == "paid": db.execute("INSERT INTO capture_retries VALUES(?,?,?,?,?)",(parent_attempt_id,run_id,self._clock(),source_url,user_direction))
+            db.execute("INSERT INTO transport_recoveries VALUES(?,?,?,?,?,?,?,?,?,?,?)",(parent_attempt_id,run_id,self._clock(),source_url,user_direction,hashlib.sha256(raw).hexdigest(),mode,parent["status_code"],parent["actual_micro"],None,None))
+            self._event(db,"user_directed_transport_recovery_authorized",run_id,parent_attempt_id)
+        return self.report(run_id)
+
+    def consume_retained_transport_recovery(self, run_id, parent_attempt_id, source_url, evidence_path):
+        """Consume before the single anonymous media completion; no automatic retry."""
+        digest = hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()
+        with self._write() as db:
+            row = db.execute("SELECT * FROM transport_recoveries WHERE run_id=? AND parent_attempt_id=?",(run_id,parent_attempt_id)).fetchone()
+            if not row or row["mode"] != "retained" or row["source_url"] != source_url or row["evidence_sha256"] != digest or row["used_at"] is not None:
+                raise UsageBlocked("retained_transport_recovery_not_authorized_or_used")
+            if db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0] or db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL OR actual_micro IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("retained_transport_recovery_hold_or_unsettled_charge")
+            db.execute("UPDATE transport_recoveries SET used_at=? WHERE parent_attempt_id=?",(self._clock(),parent_attempt_id))
+            self._event(db,"retained_transport_recovery_started",run_id,parent_attempt_id)
+
+    def hold_retained_transport_failure(self, parent_attempt_id):
+        """Name the recovered original, rather than an unrelated latest attempt."""
+        with self._write() as db:
+            row = db.execute("SELECT a.run_id,t.used_at FROM attempts a JOIN transport_recoveries t ON t.parent_attempt_id=a.attempt_id WHERE a.attempt_id=? AND t.mode='retained'",(parent_attempt_id,)).fetchone()
+            if not row or row["used_at"] is None:
+                raise UsageBlocked("retained_transport_recovery_not_started")
+            self._hold(db,"media_capture_or_validation_failed",row["run_id"],parent_attempt_id)
 
     def authorize_lost_response_recovery(self, run_id: str, parent_attempt_id: int,
                                          review_note: str) -> dict:
