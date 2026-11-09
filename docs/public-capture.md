@@ -445,3 +445,37 @@ request. It adds no account credentials, allows no redirects or retries, and ret
 all size, content and decode checks. It is managed network transport, not proxy
 rotation or a fallback after an Instagram refusal. Default media routing stays direct.
 A source already attempted is never retried to test this setting.
+
+### Explicit Cloud transport recovery
+
+On a specific user instruction to retry a failed source, `authorize-transport-recovery`
+records one source-bound allowance with the exact user words, original attempt,
+reviewed transport-fix commit and SHA-256 of a local JSON evidence file. This is not
+an unattended retry policy and does not change the older portal-reviewed helper.
+The dedicated run must be empty with one request, all charges settled, no hold, and
+a fresh passing free check. Evidence must match `attempt_id`, canonical `source_url`,
+`user_direction`, `transport_fix_reviewed: true`, and a full `transport_fix_commit`.
+
+Only two modes qualify: `paid` for a status-0 transport failure already conservatively
+settled at its full reservation (`unattended_max`), and `retained` for a successful
+known-class page fetch with no usable media, settled by the owner-approved price list.
+The latter additionally binds `retained_page_sha256`. Neither is portal-confirmed;
+keep the accounting label. Unknown charges, billing anomalies, holds, successful
+captures, source mismatches and already authorized/recovered originals are refused.
+
+```
+python scripts/igx.py public-capture authorize-transport-recovery --run RETRY_RUN \
+  --attempt-id ORIGINAL_ID --url EXACT_CANONICAL_URL \
+  --user-direction 'Exact explicit owner direction' --evidence PRIVATE_EVIDENCE.json
+```
+
+For `paid`, normal `fetch --recover-attempt ORIGINAL_ID` uses the one-request run,
+reservation, access check, pacing, burn and budget guards. Its new attempt links the
+original, whose status and charge stay unchanged. For `retained`, use
+`recover-retained-transport` with the same run, attempt, URL and evidence. It consumes
+the allowance before its anonymous media GETs and reuses the hash-bound local page,
+with no String fetch or new provider charge. Every normal host, redirect, size and
+decode guard remains. Its manifest keeps the original provider attempt plus the
+media-recovery link; failures retain a source-specific hold and cannot retry again.
+Set the reviewed managed transport options before either path. Keep private evidence
+free of credentials and signed asset URLs, and never commit retained source pages.

@@ -295,7 +295,10 @@ def soundtrack_recheck(manifest_path: Path, run: str, ledger: Ledger,
             result["remaining"] = "No public soundtrack asset exposed; user audio still missing"
         write_json(output_dir / f"{mid}.soundtrack-check.json", result)
     except Exception:
-        ledger.hold("media_capture_or_validation_failed")
+        if hold_attempt is None:
+            ledger.hold("media_capture_or_validation_failed")
+        else:
+            ledger.hold_retained_transport_failure(hold_attempt)
         raise CaptureStopped("media_capture_or_validation_failed") from None
     return dict(result, usage=ledger.report(run))
 
@@ -331,6 +334,10 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         raise CaptureStopped("shared_usage_log_failed") from None
     if report.get("hold_reason") or receipt.get("error") or receipt.get("status_code") != 200:
         raise CaptureStopped(report.get("hold_reason") or receipt.get("error") or "capture_held")
+    return capture_media(receipt, canonical, mid, attempt, run, ledger, directory, recovery_of)
+
+
+def capture_media(receipt, canonical, mid, attempt, run, ledger, directory, recovery_of=None, hold_attempt=None):
     try:
         media = extract_media(receipt["data"], mid)
         if "/reel/" in canonical and not any(a.get("kind") == "video" for a in media["media"]):
@@ -377,10 +384,35 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
                 f"page: {describe_source(receipt.get('data'), mid)}\n", encoding="utf-8")
         except OSError:
             pass
-        ledger.hold("media_capture_or_validation_failed")
+        if hold_attempt is None:
+            ledger.hold("media_capture_or_validation_failed")
+        else:
+            ledger.hold_retained_transport_failure(hold_attempt)
         raise CaptureStopped("media_capture_or_validation_failed") from None
     return {"cached": False, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
             "files": len(files), "usage": ledger.report(run)}
+
+
+def recover_retained_transport(run, attempt_id, url, evidence_path, ledger, directory):
+    canonical, mid = canonical_source(url)
+    evidence = json.loads(evidence_path.read_text())
+    page = directory / f"{mid}.source.json"
+    if hashlib.sha256(page.read_bytes()).hexdigest() != evidence.get("retained_page_sha256"):
+        raise CaptureStopped("retained_page_hash_mismatch")
+    receipt = json.loads(page.read_text())
+    extract_media(receipt["data"],mid)
+    if os.environ.get("STRING_MEDIA_USE_HTTPS_PROXY") != "1":
+        raise CaptureStopped("reviewed_managed_media_transport_required")
+    ledger.consume_retained_transport_recovery(run,attempt_id,canonical,evidence_path)
+    original = next(a for a in ledger.report()["attempt_records"] if a["attempt_id"] == attempt_id)
+    result = capture_media(receipt,canonical,mid,attempt_id,original["run_id"],ledger,directory,hold_attempt=attempt_id)
+    manifest_path = Path(result["manifest"])
+    manifest = json.loads(manifest_path.read_text())
+    manifest["media_recovery"] = {"authorization_run":run,"original_attempt_id":attempt_id,
+                                  "method":"retained exact-source page; no additional String fetch"}
+    write_json(manifest_path,manifest)
+    result.update(reused_retained_page=True,additional_string_requests=0,recovered_original_attempt=attempt_id)
+    return result
 
 
 def process_local(manifest_path: Path, model: str = "small", frame_interval: str = "1", skip_whisper: bool = False) -> dict:
@@ -492,6 +524,18 @@ def main(argv=None) -> int:
     retry.add_argument("--run", required=True)
     retry.add_argument("--url", required=True)
     retry.add_argument("--user-direction", required=True)
+    transport = sub.add_parser("authorize-transport-recovery",help="Explicit audited Cloud transport recovery")
+    transport.add_argument("--run",required=True)
+    transport.add_argument("--attempt-id",type=int,required=True)
+    transport.add_argument("--url",required=True)
+    transport.add_argument("--user-direction",required=True)
+    transport.add_argument("--evidence",type=Path,required=True)
+    retained = sub.add_parser("recover-retained-transport",help="One authorized anonymous media completion; no String fetch")
+    retained.add_argument("--run",required=True)
+    retained.add_argument("--attempt-id",type=int,required=True)
+    retained.add_argument("--url",required=True)
+    retained.add_argument("--evidence",type=Path,required=True)
+    retained.add_argument("--downloads",type=Path,default=downloads_dir())
     music = sub.add_parser("soundtrack-recheck", help="One authorized public music lookup; no photo re-downloads")
     music.add_argument("--run", required=True)
     music.add_argument("--manifest", type=Path, required=True)
@@ -544,6 +588,11 @@ def main(argv=None) -> int:
                 prior, digest = image_only_manifest(args.manifest)
                 result = ledger.authorize_soundtrack_recheck(args.run, prior["attempt_id"],
                             prior["source_url"], digest, args.user_direction)
+            elif args.command == "authorize-transport-recovery":
+                canonical,_ = canonical_source(args.url)
+                result = ledger.authorize_transport_recovery(args.run,args.attempt_id,canonical,args.user_direction,args.evidence)
+            elif args.command == "recover-retained-transport":
+                result = recover_retained_transport(args.run,args.attempt_id,args.url,args.evidence,ledger,args.downloads)
             elif args.command == "authorize-capture-retry":
                 canonical, mid = canonical_source(args.url)
                 prior = [a for a in ledger.report()["attempt_records"]
