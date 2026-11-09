@@ -32,6 +32,22 @@ python scripts/igx.py public-capture init --run approved-queue-run \
 python scripts/igx.py public-capture check-access --run approved-queue-run
 ```
 
+**Codex or another managed proxy with its own secret placeholder.** Configure
+`STRING_AI_API_KEY` as the environment's HTTP/network secret scoped to
+`https://request.usestring.ai` and retain the placeholder that environment supplies.
+Set `STRING_USE_HTTPS_PROXY=1` for the String commands. This explicitly routes only
+String's fixed API calls through inherited `HTTPS_PROXY`; it does not replace the
+credential with `proxy-injected`, add a credential, or change network policy.
+The host must also be permitted by the environment's network allowlist. A missing
+key or proxy stops before any reservation, and paid capture requires a passing
+free `check-access --run ...` for that run, just as in `proxy-injected` mode.
+The setting is inherited by the fetch worker. Instagram media downloads retain
+their separate anonymous, no-proxy client and host/redirect/validation guards.
+Never copy a secret into the command, a file or a repository. A configured
+placeholder alone does not establish that credential substitution works: verify
+`check-access` before fetching. Leave this option unset (or `0`) for direct-key
+routing; the existing literal `proxy-injected` mode remains supported.
+
 `check-access` is one free authenticated read (String's crawl-job list, which bills no
 request type). It reserves nothing and exits 3 if String refuses the key. A failed check
 is only recorded; a check that comes back billed latches a hold.

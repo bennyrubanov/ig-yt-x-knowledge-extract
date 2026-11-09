@@ -45,12 +45,16 @@ def https_proxy() -> str | None:
     return value or None
 
 
+def uses_https_proxy(key: str) -> bool:
+    """Explicit managed-secret routing; never replace the supplied credential."""
+    option = os.environ.get("STRING_USE_HTTPS_PROXY", "").strip()
+    if option not in {"", "0", "1"}:
+        raise CaptureStopped("invalid_string_use_https_proxy")
+    return key == PROXY_INJECTED_KEY or option == "1"
+
+
 def api_key() -> str:
     key = os.environ.get("STRING_AI_API_KEY", "").strip()
-    if key == PROXY_INJECTED_KEY:
-        if not https_proxy():
-            raise CaptureStopped("proxy_injected_key_needs_https_proxy")
-        return key
     if not key and sys.platform == "darwin":
         try:
             result = subprocess.run(
@@ -65,18 +69,25 @@ def api_key() -> str:
         raise CaptureStopped("missing_string_api_key")
     if "\n" in key or "\r" in key:
         raise CaptureStopped("invalid_string_api_key")
+    if uses_https_proxy(key) and not https_proxy():
+        raise CaptureStopped("proxy_injected_key_needs_https_proxy")
     return key
 
 
 def string_opener(key: str):
     """Open String's API directly, or through HTTPS_PROXY when that proxy adds the key.
 
-    Only calls to String's own API ever use a proxy, and only in proxy-injected
-    mode (a cloud machine whose egress proxy holds the key). Instagram CDN
+    Only calls to String's fixed API endpoints use this opener. Proxy-injected
+    mode or STRING_USE_HTTPS_PROXY=1 selects the inherited proxy without changing
+    the key (including a managed network-secret placeholder). Instagram CDN
     downloads never use one. String fetches the page from its own network either
     way, so this changes nothing Instagram sees.
     """
-    proxy = https_proxy() if key == PROXY_INJECTED_KEY else None
+    proxy = None
+    if uses_https_proxy(key):
+        proxy = https_proxy()
+        if not proxy:
+            raise CaptureStopped("proxy_injected_key_needs_https_proxy")
     return urllib.request.build_opener(
         urllib.request.ProxyHandler({"https": proxy} if proxy else {}), NoRedirect())
 
@@ -241,7 +252,7 @@ def soundtrack_recheck(manifest_path: Path, run: str, ledger: Ledger,
                and a["source_url"] == canonical for a in allowances):
         raise CaptureStopped("soundtrack_recheck_not_authorized_for_manifest")
     key = api_key()
-    if key == PROXY_INJECTED_KEY and not ledger.access_checked(run):
+    if uses_https_proxy(key) and not ledger.access_checked(run):
         raise CaptureStopped("string_access_check_required")
     attempt = ledger.reserve(run, mid, recovery_of=parent, recovery_source_url=canonical)
     try:
@@ -299,7 +310,7 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         return {"cached": True, "manifest": str(directory / f"{mid}.public.json"), "source_id": mid,
                 "usage": ledger.report(run)}
     key = api_key()  # Missing credentials must not consume a reservation.
-    if key == PROXY_INJECTED_KEY and not ledger.access_checked(run):
+    if uses_https_proxy(key) and not ledger.access_checked(run):
         raise CaptureStopped("string_access_check_required")
     if recovery_of is None:
         recovery_of = ledger.unauthenticated_retry_for(mid)
