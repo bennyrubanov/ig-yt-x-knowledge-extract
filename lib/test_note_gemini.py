@@ -173,6 +173,46 @@ class NoteGeminiTests(unittest.TestCase):
         row = self.drafter([reply(draft_answer(prompt="Is this true?"))]).draft(item)
         self.assertEqual(row["prompt"], ng.NO_PROMPT)
 
+    def test_a_share_title_is_split_by_the_program(self):
+        title = 'Great opening hook example Sam Rivera on Instagram: "Three ways to open a talk."'
+        item = {**self.item, "prompts": [], "title": title}
+        row = self.drafter([reply(draft_answer(prompt=ng.NO_PROMPT))]).draft(item)
+        self.assertEqual(row["prompt"], "Great opening hook example")
+        sent = self.requests[0].data.decode()
+        self.assertIn("Saved prompts, oldest first", sent)
+        self.assertNotIn("Saved title", sent)
+
+    def test_a_share_title_with_only_the_creator_has_no_prompt(self):
+        title = 'Sam Rivera on Instagram: "Does cold water burn fat!? Let us check the evidence."'
+        item = {**self.item, "prompts": [], "title": title}
+        row = self.drafter([reply(draft_answer(prompt=title))]).draft(item)
+        self.assertEqual(row["prompt"], ng.NO_PROMPT)
+
+    def test_an_unsure_share_title_takes_only_typed_words_from_the_model(self):
+        item = {**self.item, "prompts": [], "title": 'Content idea Tony on Instagram: "Five hooks that work"'}
+        row = self.drafter([reply(draft_answer(prompt="Five hooks that work"))]).draft(item)
+        self.assertEqual(row["prompt"], ng.NO_PROMPT)
+        sent = self.requests[0].data.decode()
+        self.assertIn("Words before the platform's auto-title", sent)
+        self.assertNotIn("Five hooks that work", sent)
+        (self.out / row["vault_path"]).unlink()
+        row = self.drafter([reply(draft_answer(prompt="Content idea"))]).draft(item)
+        self.assertEqual(row["prompt"], "Content idea")
+
+    def test_prompts_from_share_titles(self):
+        cases = [
+            ('Great opening hook example Sam Rivera on Instagram: "caption"', ["Great opening hook example"]),
+            ('Sam Rivera on Instagram: "caption"', []),
+            ('Sample? dj.someone on Instagram: "caption"', ["Sample?"]),
+            ('Worth trying? Some Dev on X: "post" / X', ["Worth trying?"]),
+            ('@handle on Instagram: "caption"', []),
+            ('Content idea Tony on Instagram: "caption"', None),
+            ("Long-term experiences with a hair-loss drug : r/someforum", None),
+        ]
+        for title, want in cases:
+            with self.subTest(title=title):
+                self.assertEqual(ng.prompts_from_title(title), want)
+
     def test_hubs_are_the_vaults_own_when_it_has_hub_folders(self):
         self.assertIn("decisions", self.drafter([]).hubs)
         for hub in ("good-info", "wealth"):
