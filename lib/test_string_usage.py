@@ -396,6 +396,102 @@ class StringUsageTests(unittest.TestCase):
                     attempt, f"https://www.instagram.com/p/{source}/", direction)
         self.assertEqual(self.ledger.report()["lost_capture_retries"], [])
 
+    def provider_error(self, source="abc123", status=502, clear_hold=True):
+        """A settled String 5xx at the full reservation, with its hold cleared as a release would."""
+        if not self.ledger.report()["runs"]:
+            self.run_with(min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", source)
+        self.ledger.complete(attempt, status, None, actual_usd="0.006", error="bad gateway")
+        if clear_hold:
+            with sqlite3.connect(self.path) as db:
+                db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        return attempt
+
+    def test_provider_error_retry_allows_one_rerequest_in_any_later_run(self):
+        attempt = self.provider_error()
+        url = "https://www.instagram.com/reel/abc123/"
+        direction = "Benny asked to try this reel again"
+        with self.assertRaisesRegex(ValueError, "user_direction"):
+            self.ledger.authorize_provider_error_retry(attempt, url, "yes")
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_5xx"):
+            self.ledger.authorize_provider_error_retry(attempt, "https://www.instagram.com/reel/other1/", direction)
+        report = self.ledger.authorize_provider_error_retry(attempt, url, direction)
+        self.assertEqual(report["provider_error_retries"][0]["parent_attempt_id"], attempt)
+        self.assertIn("user_directed_provider_error_retry_authorized", [e["code"] for e in report["events"]])
+        self.assertEqual(report["attempt_records"][0]["error_code"], "provider_error")
+        self.assertEqual(report["known_actual_micro"], 6000)  # the failed charge stays
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized"):
+            self.ledger.authorize_provider_error_retry(attempt, url, direction)
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+        self.assertEqual(self.ledger.provider_error_retry_for("abc123"), attempt)
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue2", "abc123")
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        self.ledger.complete(retry, 200, "request_premium")
+        report = self.ledger.report("queue2")
+        self.assertEqual(report["attempt_records"][0]["recovery_of"], attempt)
+        self.assertIn("provider_error_retry_reserved", [e["code"] for e in report["events"]])
+        self.assertIsNone(self.ledger.provider_error_retry_for("abc123"))
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        with self.assertRaisesRegex(UsageBlocked, "already"):
+            self.ledger.authorize_provider_error_retry(attempt, url, direction)
+
+    def test_provider_error_retry_keeps_the_runs_limits_and_holds(self):
+        attempt = self.provider_error()
+        url = "https://www.instagram.com/reel/abc123/"
+        self.ledger.authorize_provider_error_retry(attempt, url, "Benny asked to try this reel again")
+        self.ledger.create_run("queue2", "0.03", max_requests=1, min_gap_seconds=600)
+        with self.assertRaisesRegex(UsageBlocked, "minimum_gap"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        self.now[0] += 601
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        self.ledger.complete(retry, 200, "request_premium")
+        self.now[0] += 601
+        with self.assertRaisesRegex(UsageBlocked, "request_limit"):
+            self.ledger.reserve("queue2", "def456")
+
+    def test_provider_error_retry_refuses_holds_unsettled_and_other_failures(self):
+        direction = "Benny asked to try this reel again"
+        held = self.provider_error(clear_hold=False)
+        url = "https://www.instagram.com/reel/abc123/"
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.authorize_provider_error_retry(held, url, direction)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        denied = self.ledger.reserve("queue1", "def456")
+        self.ledger.complete(denied, 403, None, actual_usd="0.006")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        for attempt, source in ((denied, "def456"),):  # a 403 without provider_error is not a 5xx
+            with self.assertRaisesRegex(UsageBlocked, "requires_settled_5xx"):
+                self.ledger.authorize_provider_error_retry(
+                    attempt, f"https://www.instagram.com/reel/{source}/", direction)
+        ok = self.ledger.reserve("queue1", "ghi789")
+        self.ledger.complete(ok, 200, "request_premium")
+        self.ledger.mark_media(ok, True)
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_5xx"):
+            self.ledger.authorize_provider_error_retry(ok, "https://www.instagram.com/reel/ghi789/", direction)
+        pending = self.ledger.reserve("queue1", "jkl012")
+        with self.assertRaisesRegex(UsageBlocked, "pending_attempt_requires_reconciliation"):
+            self.ledger.authorize_provider_error_retry(held, url, direction)
+        self.ledger.complete(pending, 200, "request_premium")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        self.assertEqual(self.ledger.report()["provider_error_retries"], [])
+
+    def test_provider_error_retry_refuses_when_another_retry_exists(self):
+        attempt = self.provider_error()
+        url = "https://www.instagram.com/reel/abc123/"
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO lost_capture_retries VALUES(?,?,?,?)",
+                       (attempt, 1.0, url, "Benny asked for a different retry"))
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized_or_other_retry"):
+            self.ledger.authorize_provider_error_retry(attempt, url, "Benny asked to try this reel again")
+        # and the reverse: the lost-capture route does not accept a 5xx attempt
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_usable_unfiled"):
+            self.ledger.authorize_lost_capture_retry(attempt, url, "Benny asked to try this reel again")
+
     def test_unauthenticated_release_refuses_every_other_failure(self):
         self.run_with(min_gap_seconds=0)
         self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 403, None,

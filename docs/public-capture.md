@@ -83,8 +83,8 @@ immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
 media, or fast-spending hold. Do not create a fresh run to silently retry an already
 attempted source or work around a safety hold. The user-directed carousel music
-recheck, failed-capture retry and lost-capture re-capture below are narrow, separately
-audited exceptions.
+recheck, failed-capture retry, lost-capture re-capture and provider-error retry below are
+narrow, separately audited exceptions.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -419,6 +419,33 @@ python scripts/igx.py public-capture authorize-lost-capture-retry \
 A source the ledger has never seen (its first request happened in a workspace whose
 ledger was lost) needs no allowance; its first request here is an ordinary one. Record
 the lost request beside the ledger instead, from the portal's request log.
+
+### One user-directed retry after String answered a 5xx
+
+When String itself fails a request (for example HTTP 502, recorded as `provider_error`),
+the attempt settles at the full reservation and the source is marked failed. If the user
+explicitly asks to try that source again, an offline authorization allows **one** more
+request. The source's only attempt must be settled with a 5xx status and the
+`provider_error` code, with no usable media and no filed note, and no other retry or
+recovery may exist for it. Refused while a global hold is set (it never releases one;
+use the existing reviewed release first) or any attempt is unsettled. It stores the source
+URL and the user's own words (12-500 printable characters) in `provider_error_retries`
+and makes no request. The source's next ordinary `fetch`, in any run, finds the allowance
+and uses it once, counted as one of that run's planned requests with its usual reserve,
+budget, request limit, spacing, burn allowance and holds; `recovery_of` links it to the
+failed attempt, whose charge stays in history. It is shown under `provider_error_retries`
+in `usage`.
+
+Portal reconciliation is **not** required. A 5xx may not appear in String's portal, and
+the failed attempt's charge is already counted in full (reconciled value, or the whole
+reservation when settled unattended), so the retry cannot understate spending. Reconcile
+the retry's own charge as usual.
+
+```bash
+python scripts/igx.py public-capture authorize-provider-error-retry \
+  --url 'https://www.instagram.com/reel/SHORTCODE/' \
+  --user-direction 'Exact user request to try this source again'
+```
 
 ## Validate and process locally
 
