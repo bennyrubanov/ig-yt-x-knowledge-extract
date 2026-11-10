@@ -729,6 +729,124 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageBlocked, "run_unattended_resume_limit_reached"):
             self.ledger.resume_unattended("queue1", self.NOTE)
 
+    def retry_fetch(self, run, source, status=0, billed=None, error="provider_deadline_exceeded",
+                    usable=False):
+        parent = self.ledger.automatic_retry_for(source)
+        self.assertIsNotNone(parent)
+        attempt = self.ledger.reserve(run, source, recovery_of=parent,
+                                      recovery_source_url=f"https://www.instagram.com/reel/{source}/")
+        self.ledger.complete(attempt, status, billed, error=error)
+        if usable:
+            self.ledger.mark_media(attempt)
+        return attempt
+
+    def release(self, run, note="Failed fetch released; retrying it later"):
+        self.ledger.record_access_check(200)
+        return self.ledger.resume_unattended(run, note)
+
+    def test_automatic_retry_follows_a_failed_source_three_times_then_never(self):
+        """Benny, 2026-11-10: "by default you can retry each a few times"."""
+        self.run_with(budget="0.2", max_requests=10, min_gap_seconds=0, burn_limit_usd="1")
+        first = self.failed_fetch("queue1", "abc123", status=502, error="provider_http_error")
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):  # nothing goes out until released
+            self.ledger.reserve("queue1", "abc123", recovery_of=first,
+                                recovery_source_url="https://www.instagram.com/reel/abc123/")
+        self.release("queue1")
+        self.assertEqual(self.ledger.automatic_retry_for("abc123"), first)
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue1", "abc123", recovery_of=first,
+                                recovery_source_url="https://www.instagram.com/reel/other99/")
+        second = self.retry_fetch("queue1", "abc123", status=200, billed="request_premium", error=None)
+        self.ledger.hold("media_capture_or_validation_failed")
+        self.release("queue1")
+        third = self.retry_fetch("queue1", "abc123", status=403, billed="request_premium", error=None)
+        self.release("queue1")
+        # A later run can take the last retry; the chain links each try to the one before.
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.ledger.create_run("queue2", "0.1", min_gap_seconds=0, burn_limit_usd="1")
+        fourth = self.retry_fetch("queue2", "abc123", status=200, billed="request_premium", error=None)
+        self.ledger.hold("media_capture_or_validation_failed")
+        self.assertEqual(self.release("queue2")["automatic_retries"][0]["retry_number"], 3)
+        report = self.ledger.report()
+        self.assertEqual([r["recovery_of"] for r in report["attempt_records"]], [None, first, second, third])
+        self.assertEqual([(r["parent_attempt_id"], r["child_attempt_id"], r["retry_number"])
+                          for r in report["automatic_retries"]],
+                         [(first, second, 1), (second, third, 2), (third, fourth, 3)])
+        self.assertTrue(all("a few times" in r["rule"] for r in report["automatic_retries"]))
+        self.assertIn("automatic_retry_reserved", [e["code"] for e in report["events"]])
+        self.assertIsNone(self.ledger.automatic_retry_for("abc123"))
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue2", "abc123")
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=fourth,
+                                recovery_source_url="https://www.instagram.com/reel/abc123/")
+
+    def test_automatic_retry_never_follows_a_usable_post_or_a_billing_problem(self):
+        self.run_with(budget="0.2", max_requests=10, min_gap_seconds=0, burn_limit_usd="1")
+        self.good_fetch("queue1", "good11")
+        self.assertIsNone(self.ledger.automatic_retry_for("good11"))  # never paid for twice
+        oddity = self.ledger.reserve("queue1", "odd222")
+        self.ledger.complete(oddity, 200, None)  # a 2xx with no billing class
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        self.assertIsNone(self.ledger.automatic_retry_for("odd222"))
+        jump = self.ledger.reserve("queue1", "jmp333", expected_billing_class="request_standard")
+        self.ledger.complete(jump, 403, "request_premium")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        self.assertIsNone(self.ledger.automatic_retry_for("jmp333"))
+        self.assertIsNone(self.ledger.automatic_retry_for("never44"))
+
+    def test_automatic_retry_keeps_the_runs_limits_and_yields_to_an_allowance(self):
+        self.run_with(budget="0.1", max_requests=2, min_gap_seconds=0, burn_limit_usd="1")
+        failed = self.failed_fetch("queue1", "abc123", status=502, error="provider_http_error")
+        self.release("queue1")
+        self.good_fetch("queue1", "def456")
+        url = "https://www.instagram.com/reel/abc123/"
+        with self.assertRaisesRegex(UsageBlocked, "request_limit"):  # a retry is a planned request
+            self.ledger.reserve("queue1", "abc123", recovery_of=failed, recovery_source_url=url)
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0, burn_limit_usd="1")
+        self.ledger.authorize_provider_error_retry(failed, url, "Benny asked to try this reel again")
+        self.assertIsNone(self.ledger.automatic_retry_for("abc123"))
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=failed, recovery_source_url=url)
+        self.ledger.complete(retry, 502, None, error="bad gateway")
+        self.release("queue2")
+        # After the user-directed try, the standing rule still allows the rest of the three.
+        self.assertEqual(self.ledger.automatic_retry_for("abc123"), retry)
+        report = self.ledger.report("queue2")
+        self.assertIn("provider_error_retry_reserved", [e["code"] for e in report["events"]])
+
+    def test_retry_releases_spare_the_eight_and_post_failures_are_not_in_a_row(self):
+        self.run_with(budget="0.5", max_requests=40, min_gap_seconds=0, burn_limit_usd="1")
+        for n in range(8):
+            self.good_fetch("queue1", f"good{n}")
+            self.failed_fetch("queue1", f"fail{n}", status=200, billed="request_premium", error=None)
+            self.ledger.hold("media_capture_or_validation_failed")
+            self.release("queue1")
+        # All eight releases are used, yet each failed post still gets its retries, back to
+        # back: Instagram answering without the post says nothing about String.
+        for _ in range(3):
+            self.retry_fetch("queue1", "fail7", status=200, billed="request_premium", error=None)
+            self.ledger.hold("media_capture_or_validation_failed")
+            report = self.release("queue1")
+            self.assertEqual(report["reviews"][-1]["code"], "unattended_retry_resume")
+        # A new failed post still meets the cap of eight.
+        self.failed_fetch("queue1", "fail8", status=200, billed="request_premium", error=None)
+        self.ledger.hold("media_capture_or_validation_failed")
+        with self.assertRaisesRegex(UsageBlocked, "run_unattended_resume_limit_reached"):
+            self.release("queue1")
+
+    def test_string_failing_a_retry_still_counts_in_a_row(self):
+        self.run_with(budget="0.2", max_requests=10, min_gap_seconds=0, burn_limit_usd="1")
+        self.failed_fetch("queue1", "abc123", status=502, error="provider_http_error")
+        self.release("queue1")
+        self.retry_fetch("queue1", "abc123", status=503, error="provider_http_error")
+        self.release("queue1")
+        self.retry_fetch("queue1", "abc123", status=0)
+        with self.assertRaisesRegex(UsageBlocked, "failures_in_a_row_limit_reached"):
+            self.release("queue1")
+
     def test_unattended_release_waits_out_the_burn_window(self):
         self.run_with(budget="1", min_gap_seconds=0, burn_limit_usd="0.006")
         self.good_fetch("queue1", "abc123")
@@ -1063,11 +1181,12 @@ class StringUsageTests(unittest.TestCase):
         path = self.portal_evidence(["lost123"], total="0.003")
         self.ledger.reconcile_portal("queue1", path, "Reviewed portal-paid lost response")
         self.ledger.resume_reviewed_timeout("queue1", "Worker stopped and portal charge confirmed")
-        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
-            self.ledger.reserve("queue1", "lost123", recovery_of=parent,
-                                recovery_source_url="https://www.instagram.com/reel/lost123/")
+        # No usable post came back, so the standing rule would retry it; an allowance with
+        # its own path takes precedence once it exists.
+        self.assertEqual(self.ledger.automatic_retry_for("lost123"), parent)
         self.ledger.authorize_lost_response_recovery("queue1", parent,
             "One explicit extra call for paid response lost locally")
+        self.assertIsNone(self.ledger.automatic_retry_for("lost123"))
         with self.assertRaisesRegex(UsageBlocked, "run_recovery_allowance"):
             self.ledger.authorize_lost_response_recovery("queue1", parent, "Second attempt is prohibited")
         other = self.ledger.reserve("queue1", "other456")

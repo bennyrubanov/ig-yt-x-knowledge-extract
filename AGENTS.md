@@ -90,7 +90,7 @@ python3 scripts/notion-extract-inbox.py list
 python3 scripts/notion-extract-inbox.py urls
 ```
 
-Then `igx batch` those URLs (`--workers 1`; the persistent Instagram safety guard applies) and `mark --status noted` (or `fail`). Empty Instagram media → stop the run and review; do **not** retry in the same run or mark other unattempted items failed. **Do not skip** because the caption says comment a word for a link — extract the reel; ignore the keyword. The prompt is the **Name** text before `on Instagram:` (question, statement, or filing instruction), not a Question column. Ticker prompts belong on the vault wealth trackers, not only in chat.
+Then `igx batch` those URLs (`--workers 1`; the persistent Instagram safety guard applies) and `mark --status noted` (a save that can't be captured is still filed from its row, per the failed-save rule below). Empty Instagram media → stop the run and review; do **not** retry in the same run or mark other unattempted items failed. **Do not skip** because the caption says comment a word for a link — extract the reel; ignore the keyword. The prompt is the **Name** text before `on Instagram:` (question, statement, or filing instruction), not a Question column. Ticker prompts belong on the vault wealth trackers, not only in chat.
 
 ## Paths
 
@@ -110,6 +110,8 @@ Copy `local.env.example` → `local.env`. Token for the Notion CLI: `NOTION_TOKE
 Write the **receipt** under `instagram/extractions/` (or `youtube/` / `twitter/`). Write the **human page** in a knowledge-center folder. Filing: [docs/obsidian-filing.md](docs/obsidian-filing.md).
 
 Document as you go. A learning that is only in chat is not captured. Pipeline lessons go in [docs/agent-workflow.md](docs/agent-workflow.md). Personal parked work goes in `BACKLOG.local.md` if that file exists.
+
+**A failed save is retried and filed, never asked about (Benny, 2026-11-10):** "if its in my notion queue, i want it filed. if it fails, i want the fail properly addressed and documented proactively. i can be notified what happened after the fact", then "by default you can retry each a few times". String public capture retries a source whose requests brought no usable post by itself, up to three more times, inside the run's limits ([automatic retries](docs/public-capture.md#automatic-retries-of-a-failed-source)). Other platforms get their fallbacks. A save that still has nothing usable is filed from its Notion row (link, his prompt, anything typed on it) with a line saying what failed, marked `noted`, and listed in the run's report. Never ask him per post. This doesn't reopen the authenticated extractor: its empty-media stop and the account incident above still hold, and String public capture is the retry route.
 
 **Project handoffs:** route useful content-creation, travel, personal-investing, health/fitness and music knowledge into the related repositories configured in local instructions. Keep the full source note in Obsidian and add a usable reference or retrieval guide in the project during the same turn. Follow [docs/project-handoffs.md](docs/project-handoffs.md); a saved source is not a completed real-world action or validated recommendation.
 

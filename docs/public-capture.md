@@ -82,9 +82,11 @@ authorization limit. Use a fresh run ID for new work; old run limits remain
 immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
 media, or fast-spending hold. Do not create a fresh run to silently retry an already
-attempted source or work around a safety hold. The user-directed carousel music
-recheck, failed-capture retry, lost-capture re-capture, provider-error retry and empty-capture retry below are
-narrow, separately audited exceptions.
+attempted source or work around a safety hold. A source whose requests brought no usable
+post is tried again only through its [automatic retries](#automatic-retries-of-a-failed-source)
+(up to three, recorded). The user-directed carousel music recheck, failed-capture retry,
+lost-capture re-capture, provider-error retry and empty-capture retry below are narrow,
+separately audited exceptions.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -102,7 +104,8 @@ evade a hold. Production runs must use the same ledger.
 - Only one outstanding paid request across the ledger. An interrupted request
   retains its reservation and prevents another request until it is investigated
   or released by `resume-unattended` (below), which counts it at its full
-  reservation; there is no automatic retry of that source.
+  reservation. The source's next fetch after that is one of its automatic retries
+  (below); nothing retries it inside the same request.
 - Default spacing is at least 15 seconds, with a $0.03 allowance per rolling
   60 seconds. At the $0.006 reservation that allowance is five requests a minute, so
   the gap is wider than 12 seconds: a run fetching as fast as the gap lets it never
@@ -124,7 +127,8 @@ evade a hold. Production runs must use the same ledger.
   WebSocket sessions are disabled. There is no cookie/browser/account/proxy
   fallback and no retry after denial/challenge/rate limit.
 - Reuse hash-verified cached captures without a provider request. A previously
-  attempted source is not silently fetched again under a different run.
+  attempted source is not fetched again under a different run, apart from its recorded
+  automatic retries.
 
 Every report separates the provider-reported request class, the price-derived
 estimate, known actual charges, unknown actual-charge count and conservative
@@ -282,8 +286,8 @@ python scripts/igx.py public-capture resume-reviewed-media-failure \
 ```
 
 The failed attempt must be the ledger's latest, settled with HTTP 200 and with
-no other hold since the last reviewed release. It stays recorded as unusable
-and is never fetched again. A run allows at most two such releases, so a third
+no other hold since the last reviewed release. It stays recorded as unusable, and
+the source's next fetch is one of its automatic retries (below). A run allows at most two such releases, so a third
 media failure stops it for good. File the source from what was saved and state
 the missing item in the note. Unattended queue runs use `resume-unattended`
 instead (below), which also covers media failures with a wider limit.
@@ -298,7 +302,7 @@ holds that can't mean a billing problem themselves, after a free key check:
 python scripts/igx.py public-capture usage            # hold_reason and hold_run_id
 python scripts/igx.py public-capture check-access --run HOLD_RUN_ID
 python scripts/igx.py public-capture resume-unattended --run HOLD_RUN_ID \
-  --review-note 'String timed out on SHORTCODE; marked fail, never refetched'
+  --review-note 'String timed out on SHORTCODE; retrying it after the batch'
 ```
 
 Within the night (the hold is under six hours old) it releases:
@@ -329,8 +333,54 @@ Each failed or interrupted request is counted at its full reservation
 (`actual_source: unattended_max`, an `unattended_max_charge` event), which a later
 `reconcile-portal` may replace; successful fetches in the run are left for
 `settle-from-price-list`. The release is recorded in `reviews` as `unattended_resume`
-(within the night) or `unattended_restart` (a later night) with its note. Failed sources
-stay attempted and are never fetched again, so mark their saves failed with the reason.
+(within the night), `unattended_restart` (a later night) or `unattended_retry_resume`
+(below) with its note. A failed source gets its automatic retries (below); a save whose
+retries are used up is filed from what was saved, never left as a bare failure.
+
+A failed automatic retry is released the same way, with two differences, because the
+source's three-retry limit already bounds it: its release (`unattended_retry_resume`)
+doesn't use one of the run's eight, and a retry Instagram answered without the post (a
+billed failure, a page with no media) isn't counted in a row, since it says something
+about that post and not about String. A retry String itself failed (a timeout, a 5xx, a
+crash) still counts, so String struggling still stops the night.
+
+### Automatic retries of a failed source
+
+Benny, 2026-11-10: "if its in my notion queue, i want it filed. if it fails, i want the
+fail properly addressed and documented proactively. i can be notified what happened
+after the fact", then "by default you can retry each a few times". So nobody is asked
+before a failed source is tried again.
+
+When every request for a source brought no usable post (String timed out, crashed, was
+busy or failed with a 5xx; Instagram refused String's fetch; the page came back with no
+media; the media failed validation), the source's next ordinary `fetch`, in the same run
+or a later one, is an automatic retry, up to **three** after the first request. It needs
+no command of its own and no allowance. Each retry:
+
+- waits for the hold the failure latched to be released (`resume-unattended`), like any
+  request, and keeps the run's reserve, budget, request limit, spacing and fast-spending
+  allowance; a retry is one of the run's planned requests, so a run that expects to retry
+  needs `--max-requests` to cover it;
+- links the request before it through `recovery_of` and is recorded in
+  `automatic_retries` (child and parent attempt, run, source URL, retry number and the
+  rule's words), shown in `usage`, with an `automatic_retry_reserved` event;
+- keeps every earlier attempt and its charge in history.
+
+It never follows a request that returned a usable post, so a post already paid for is
+never paid for twice (a cached capture is reused without a request, as always), and never
+a request whose answer looked like a billing problem (a 2xx without a billing class, an
+unexpected class, a price jump, a charge above the reservation); those holds wait for a
+person as before. An unused user-directed allowance for the source (below) is used first,
+and its request counts toward the three. After the third retry the source is never
+fetched again and `fetch` answers `source_already_attempted`: file the save from what was
+saved (its Notion row) and say in the note and the run report what failed.
+
+Queue runs do the retries after the batch's other links, not straight after a failure,
+so a busy String has time to recover and a stop for the night doesn't hold up fresh links
+(the queue's run procedure says exactly how).
+
+The user-directed allowances below came before this rule. A queue run doesn't need them;
+they stay for a person's own request about a source that has had only one attempt.
 
 ### One user-directed carousel soundtrack recheck
 

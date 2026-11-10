@@ -459,16 +459,39 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(main(["--ledger", ledger_path, "resume-unattended", "--run", "run", *note]), 0)
         self.assertIsNone(json.loads(output.getvalue())["hold_reason"])
         with patch("string_capture.api_key", return_value="fake"), patch(
-                "string_capture.bounded_fetch_page") as fetch:
-            with self.assertRaises(UsageBlocked):
-                capture("https://www.instagram.com/reel/Test123/", "run", self.ledger, self.root)
-            fetch.assert_not_called()
-        with patch("string_capture.api_key", return_value="fake"), patch(
                 "string_capture.bounded_fetch_page",
                 return_value={"status_code": 503, "error": "provider_http_error"}) as fetch:
             with self.assertRaises(CaptureStopped):
                 capture("https://www.instagram.com/reel/Other45/", "run", self.ledger, self.root)
             fetch.assert_called_once()
+
+    def test_a_failed_source_is_retried_automatically_three_times_then_never(self):
+        """Benny, 2026-11-10: "by default you can retry each a few times"."""
+        ledger_path = str(self.root / "usage.sqlite")
+        url = "https://www.instagram.com/reel/Test123/"
+        note = ["--review-note", "Instagram refused String's fetch of Test123; retrying it"]
+        for number in range(4):
+            with patch("string_capture.api_key", return_value="fake"), patch(
+                    "string_capture.bounded_fetch_page",
+                    return_value={"status_code": 403, "billed_request_type": "request_premium"}) as fetch:
+                with self.assertRaisesRegex(CaptureStopped, "provider_denial"):
+                    capture(url, "run", self.ledger, self.root)
+                fetch.assert_called_once()
+            with patch("string_capture.api_key", return_value="proxy-injected"), \
+                    patch("string_capture.check_access", return_value={"status_code": 200}), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["--ledger", ledger_path, "check-access", "--run", "run"]), 0)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["--ledger", ledger_path, "resume-unattended", "--run", "run", *note]), 0)
+        report = self.ledger.report()
+        self.assertEqual([a["recovery_of"] for a in report["attempt_records"]],
+                         [None, 1, 2, 3])
+        self.assertEqual([r["retry_number"] for r in report["automatic_retries"]], [1, 2, 3])
+        with patch("string_capture.api_key", return_value="fake"), patch(
+                "string_capture.bounded_fetch_page") as fetch:
+            with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+                capture(url, "run", self.ledger, self.root)
+            fetch.assert_not_called()
 
     def test_capture_retries_a_source_string_refused_as_unauthenticated_once(self):
         with patch("string_capture.api_key", return_value="fake"), patch(

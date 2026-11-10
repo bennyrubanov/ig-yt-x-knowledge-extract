@@ -314,7 +314,8 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         raise CaptureStopped("string_access_check_required")
     if recovery_of is None:
         recovery_of = (ledger.unauthenticated_retry_for(mid) or ledger.lost_capture_retry_for(mid)
-                       or ledger.provider_error_retry_for(mid) or ledger.empty_capture_retry_for(mid))
+                       or ledger.provider_error_retry_for(mid) or ledger.empty_capture_retry_for(mid)
+                       or ledger.automatic_retry_for(mid))
     attempt = ledger.reserve(run, mid, recovery_of=recovery_of,
                              recovery_source_url=canonical if recovery_of is not None else None)
     try:
@@ -466,7 +467,9 @@ def main(argv=None) -> int:
     init.add_argument("--max-request-usd", default="0.006")
     init.add_argument("--min-gap-seconds", type=float, default=15)
     init.add_argument("--acknowledge-incident", action="store_true", required=True)
-    fetch = sub.add_parser("fetch", help="One metered public fetch, then anonymous validated media; no retries")
+    fetch = sub.add_parser("fetch", help="One metered public fetch, then anonymous validated media. Fetching a"
+                                         " source whose earlier requests brought no usable post is one of its"
+                                         " three automatic retries")
     fetch.add_argument("url")
     fetch.add_argument("--run", required=True)
     fetch.add_argument("--recover-attempt", type=int,
