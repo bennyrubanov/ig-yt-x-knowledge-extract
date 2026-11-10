@@ -573,7 +573,28 @@ A save whose Notion title is empty or just "Instagram" is not a sign the post is
 ## Journal branch and failed-capture retries (2026-10-15)
 
 - **Create the change journal's branch before marking rows.** The marking step writes each journal entry to a branch through the GitHub API; if the branch does not exist yet, the first write fails with a 404 and no Notion row changes. Create it from the journal repository's main branch, mark, then merge the journal PR and delete the branch.
-- **One retry for a failed capture, only on the user's word.** A paid page fetch that gave no usable media can now be retried once per source through `authorize-capture-retry` ([public capture](public-capture.md#one-user-directed-retry-after-a-failed-media-capture)). Record the user's own words as the direction. An agent safety check may treat adding or using this exception as security-sensitive; it needs the user's explicit yes to the exception itself, not only to the queue run.
+- **One retry for a failed capture, only on the user's word** (superseded on 2026-11-10 by [automatic retries](#failed-saves-are-retried-and-filed-2026-11-10)). A paid page fetch that gave no usable media can now be retried once per source through `authorize-capture-retry` ([public capture](public-capture.md#one-user-directed-retry-after-a-failed-media-capture)). Record the user's own words as the direction. An agent safety check may treat adding or using this exception as security-sensitive; it needs the user's explicit yes to the exception itself, not only to the queue run.
+
+## Failed saves are retried and filed (2026-11-10)
+
+Asking the user before each retry cost more than the retries: on 2026-11-10 one evening
+brought three separate questions (an empty capture, a String 502 and three older empty
+captures), each about a third of a cent. The user: "i dont want to keep getting peppered
+with retry request. if its in my notion queue, i want it filed. if it fails, i want the
+fail properly addressed and documented proactively. i can be notified what happened after
+the fact", then "by default you can retry each a few times".
+
+- **String retries by itself.** A source whose requests brought no usable post is tried
+  again by its next ordinary `fetch`, up to three times after the first, inside the run's
+  limits ([automatic retries](public-capture.md#automatic-retries-of-a-failed-source)).
+  It never re-requests a post that came back usable, and never one whose answer looked
+  like a billing problem.
+- **Retry after the other links.** A failure straight after another one is weak evidence
+  about the post; String may just be busy. Release the hold, go on with the batch, then
+  fetch the failed links again.
+- **File what can't be captured.** After the last retry, write the note from the Notion
+  row (link, saved prompt, typed text), say in it what failed and when, mark the row
+  `noted` and list the save in the report. A bare `fail` row is no longer an end state.
 
 ## Cloud runs (2026-10-31)
 

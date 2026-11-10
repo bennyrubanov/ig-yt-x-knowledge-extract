@@ -5,6 +5,8 @@ an invoice; actual charges remain unknown unless the provider reports them.
 This ledger never makes a network request. Portal reconciliation can release only
 an explicitly reviewed, fully accounted timeout hold; `resume_unattended` releases
 the holds a run may clear by itself, counting their requests at the full reservation.
+A source whose requests brought no usable post gets up to three automatic retries
+(`automatic_retry_for`), each under the run's usual limits.
 """
 from __future__ import annotations
 
@@ -33,7 +35,8 @@ _RESUMABLE_HOLDS = frozenset({"provider_wall_time_exceeded"})
 _UNAUTHENTICATED_HOLDS = frozenset({"provider_denial", "unknown_billing_class", "provider_error"})
 # Each reviewed release covers the holds latched since the previous one, of any kind.
 _REVIEWED_RESUMES = ("reviewed_timeout_resume", "reviewed_media_resume",
-                     "reviewed_unauthenticated_resume", "unattended_resume", "unattended_restart")
+                     "reviewed_unauthenticated_resume", "unattended_resume", "unattended_restart",
+                     "unattended_retry_resume")
 # Holds a run may release by itself (the owner, 2026-11-03: "I don't want Instagram to get
 # paused very easily and I want you to be smart about restarting without me"): a failed
 # or timed-out fetch, a crash mid-fetch, a post whose media failed, and the fast-spending
@@ -52,6 +55,21 @@ MAX_FAILURES_IN_A_ROW = 3
 UNATTENDED_RESTART_SECONDS = 6 * 3600
 # The key check an unattended release needs must be this recent.
 ACCESS_CHECK_FRESH_SECONDS = 3600
+# Benny, 2026-11-10: "if its in my notion queue, i want it filed. if it fails, i want the fail
+# properly addressed and documented proactively. i can be notified what happened after the
+# fact", then "by default you can retry each a few times". So a source whose request brought
+# no usable post is requested again by its next ordinary fetch, up to three more times, without
+# asking anyone. The run's request limit, budget, pacing and holds still apply to each retry.
+MAX_AUTOMATIC_RETRIES = 3
+AUTOMATIC_RETRY_RULE = ("Benny 2026-11-10: if its in my notion queue, i want it filed; "
+                        "by default you can retry each a few times")
+# A source whose answer looked like a billing problem is never retried automatically.
+_BILLING_ANOMALY_HOLDS = frozenset({"unexpected_billing_class", "rate_jump", "cost_above_reservation",
+                                    "class_above_reservation", "invalid_actual_cost"})
+# Allowances with their own path; an unused one is used before any automatic retry.
+_ALLOWANCE_TABLES = ("unauthenticated_retries", "lost_capture_retries", "provider_error_retries",
+                     "empty_capture_retries", "capture_retries", "transport_recoveries",
+                     "recovery_allowances", "soundtrack_rechecks")
 MAX_RUN_MICRODOLLARS = 1_000_000
 MAX_REQUEST_MICRODOLLARS = 6_000
 MAX_RUN_REQUESTS = 111
@@ -214,6 +232,12 @@ class Ledger:
                     parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     at REAL NOT NULL, source_url TEXT NOT NULL, user_direction TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS automatic_retries (
+                    child_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    parent_attempt_id INTEGER NOT NULL UNIQUE REFERENCES attempts(attempt_id),
+                    run_id TEXT NOT NULL, at REAL NOT NULL, source_url TEXT NOT NULL,
+                    retry_number INTEGER NOT NULL, rule TEXT NOT NULL
+                );
             """)
         self._migrate_recovery_schema()
         if self.path.exists():
@@ -359,6 +383,43 @@ class Ledger:
             return max(row["reserve_micro"], row["estimate_micro"] or 0)
         return max(row["actual_micro"], row["estimate_micro"] or 0)
 
+    @staticmethod
+    def _automatic_retry_parent(db, source_host: str, source_id: str) -> int | None:
+        """The attempt a source's next automatic retry would follow, or None.
+
+        Eligible when every request for the source brought no usable post and no note,
+        the latest one is settled, fewer than MAX_AUTOMATIC_RETRIES retries came after
+        the first, none of them looked like a billing problem, and no allowance with its
+        own path is waiting. A capture that returned a usable post is never requested
+        automatically again, so a post already paid for is never paid for twice.
+        """
+        rows = db.execute("SELECT * FROM attempts WHERE source_host=? AND source_id=? ORDER BY attempt_id",
+                          (source_host, source_id)).fetchall()
+        if not rows or rows[0]["recovery_of"] is not None or len(rows) > MAX_AUTOMATIC_RETRIES:
+            return None
+        latest = rows[-1]
+        if latest["settled_at"] is None or any(r["usable_media"] or r["note_path"] for r in rows):
+            return None
+        ids = [r["attempt_id"] for r in rows]
+        marks = ",".join("?" * len(ids))
+        if any(r["status_code"] is not None and 200 <= r["status_code"] < 300 and r["billing_class"] is None
+               for r in rows):
+            return None
+        anomalies = ",".join("?" * len(_BILLING_ANOMALY_HOLDS))
+        if db.execute(f"SELECT 1 FROM events WHERE attempt_id IN ({marks}) AND substr(code,6) IN ({anomalies}) "
+                      "AND code LIKE 'hold:%'", (*ids, *sorted(_BILLING_ANOMALY_HOLDS))).fetchone():
+            return None
+        for table in _ALLOWANCE_TABLES:
+            if db.execute(f"SELECT 1 FROM {table} WHERE parent_attempt_id=?", (latest["attempt_id"],)).fetchone():
+                return None
+        return latest["attempt_id"]
+
+    def automatic_retry_for(self, source_id: str, source_host: str = "www.instagram.com") -> int | None:
+        """The attempt the source's next ordinary fetch retries automatically, if any."""
+        source_id = _token(source_id, "source_id")
+        with self._db() as db:
+            return self._automatic_retry_parent(db, source_host, source_id)
+
     def reserve(self, run_id: str, source_id: str,
                 source_host: str = "www.instagram.com", *,
                 expected_billing_class: str | None = None,
@@ -388,6 +449,7 @@ class Ledger:
                 raise UsageBlocked("capture_retry_exact_source_only")
             dedicated_run = bool(recheck or retry)
             auth_retry_allowed = lost_capture_allowed = provider_error_allowed = empty_capture_allowed = False
+            automatic_allowed = False
             if recovery_of is None:
                 if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
                               (source_host, source_id)).fetchone():
@@ -431,14 +493,19 @@ class Ledger:
                     not dedicated_run and parent and source_match and source_match[1] == source_id
                     and db.execute("SELECT 1 FROM empty_capture_retries WHERE parent_attempt_id=?",
                                    (recovery_of,)).fetchone())
+                # A source whose requests brought no usable post, retried by the standing rule.
+                automatic_allowed = bool(
+                    not dedicated_run and parent and source_match and source_match[1] == source_id
+                    and self._automatic_retry_parent(db, source_host, source_id) == recovery_of)
                 if (not parent or not (lost_response_allowed or soundtrack_allowed or retry_allowed
                                        or auth_retry_allowed or lost_capture_allowed
-                                       or provider_error_allowed or empty_capture_allowed)
+                                       or provider_error_allowed or empty_capture_allowed
+                                       or automatic_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
                         or not (auth_retry_allowed or lost_capture_allowed or provider_error_allowed
-                                or empty_capture_allowed
+                                or empty_capture_allowed or automatic_allowed
                                 or transport_allowed or (parent_source and parent_source[0] == recovery_source_url))
-                        or parent["recovery_of"] is not None
+                        or (parent["recovery_of"] is not None and not automatic_allowed)
                         or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
                     raise UsageBlocked("recovery_not_authorized_or_already_used")
             last = db.execute("SELECT MAX(reserved_at) FROM attempts").fetchone()[0]
@@ -451,11 +518,12 @@ class Ledger:
             auth_parents = {r[0] for r in db.execute("SELECT parent_attempt_id FROM unauthenticated_retries "
                                                      "UNION SELECT parent_attempt_id FROM lost_capture_retries "
                                                      "UNION SELECT parent_attempt_id FROM provider_error_retries "
-                                                     "UNION SELECT parent_attempt_id FROM empty_capture_retries")}
+                                                     "UNION SELECT parent_attempt_id FROM empty_capture_retries "
+                                                     "UNION SELECT parent_attempt_id FROM automatic_retries")}
             original_count = len(rows) if dedicated else sum(
                 row["recovery_of"] is None or row["recovery_of"] in auth_parents for row in rows)
             if ((recovery_of is None or dedicated or auth_retry_allowed or lost_capture_allowed
-                    or provider_error_allowed or empty_capture_allowed)
+                    or provider_error_allowed or empty_capture_allowed or automatic_allowed)
                     and original_count >= run["max_requests"]):
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
@@ -472,7 +540,14 @@ class Ledger:
                                 (run_id, source_id, source_host, now, run["max_request_micro"],
                                  expected_billing_class, recovery_of))
             attempt_id = cursor.lastrowid
-            self._event(db, "soundtrack_recheck_reserved" if recheck else
+            if automatic_allowed:
+                number = db.execute("SELECT COUNT(*) FROM attempts WHERE source_host=? AND source_id=?",
+                                    (source_host, source_id)).fetchone()[0] - 1
+                db.execute("INSERT INTO automatic_retries VALUES(?,?,?,?,?,?,?)",
+                           (attempt_id, recovery_of, run_id, now, recovery_source_url, number,
+                            AUTOMATIC_RETRY_RULE))
+            self._event(db, "automatic_retry_reserved" if automatic_allowed else
+                        "soundtrack_recheck_reserved" if recheck else
                         "capture_retry_reserved" if retry else
                         "lost_capture_retry_reserved" if lost_capture_allowed else
                         "provider_error_retry_reserved" if provider_error_allowed else
@@ -1135,7 +1210,8 @@ class Ledger:
         """Release one reviewed media-validation hold so the run can go on.
 
         The paid page fetch succeeded; only that source's media failed locally.
-        The attempt stays recorded as unusable and is never fetched again. A run
+        The attempt stays recorded as unusable; the source's next fetch is one of its
+        automatic retries (`automatic_retry_for`). A run
         gets at most ``max_per_run`` releases, so a third failure still stops it.
         """
         run_id = _token(run_id, "run_id")
@@ -1184,7 +1260,11 @@ class Ledger:
         - the fast-spending window, once that window has passed;
 
         at most eight times a run, and never the third failed request in a row (counted
-        across runs). A hold six hours old or more is from an earlier night and also
+        across runs). An automatic retry (`automatic_retry_for`) that failed doesn't use
+        one of the eight, and one Instagram answered without the post (a billed failure)
+        isn't counted in a row: it says something about that post, not about String, and
+        the source's three-retry limit already bounds it. A retry String itself failed
+        still counts. A hold six hours old or more is from an earlier night and also
         releases a request String itself refused (another 4xx), once, without those two
         limits; if the next request fails as well, the run stops again. A 401 has
         its own release (`resume_reviewed_unauthenticated`), and a 2xx answer with no
@@ -1192,7 +1272,8 @@ class Ledger:
 
         Each failed or interrupted request is counted at its full reservation
         (`unattended_max`), which a later portal reconciliation may replace; successful
-        fetches are left for the price list. Failed sources are never fetched again.
+        fetches are left for the price list. A failed source is fetched again only by its
+        automatic retries (at most three), and never after those.
         """
         run_id = _token(run_id, "run_id")
         if (not isinstance(review_note, str) or not 12 <= len(review_note) <= 500
@@ -1213,6 +1294,8 @@ class Ledger:
             if not holds:
                 raise UsageBlocked("no_hold_events_to_review")
             latest = db.execute("SELECT * FROM attempts ORDER BY attempt_id DESC LIMIT 1").fetchone()
+            retry_children = {r[0] for r in db.execute("SELECT child_attempt_id FROM automatic_retries")}
+            only_retries = True
             for event in holds:
                 reason = event["code"][5:]
                 if reason not in _UNATTENDED_HOLDS:
@@ -1223,6 +1306,7 @@ class Ledger:
                     wait = run["burn_window_seconds"] - (now - event["at"])
                     if wait > 0:
                         raise UsageBlocked("burn_window_still_open", wait)
+                    only_retries = False
                     continue
                 # A capture latches media, crash and wall-time holds without naming the
                 # attempt; they concern the ledger's latest one, as the media release assumes.
@@ -1232,6 +1316,8 @@ class Ledger:
                     raise UsageBlocked("hold_without_an_attempt")
                 if row["run_id"] != run_id:
                     raise UsageBlocked("hold_from_another_run:" + row["run_id"])
+                if row["attempt_id"] not in retry_children:
+                    only_retries = False
                 status, billed = row["status_code"], row["billing_class"] is not None
                 if event["attempt_id"] is None:
                     if reason == "media_capture_or_validation_failed":
@@ -1250,14 +1336,17 @@ class Ledger:
             if not restart:
                 used = db.execute("SELECT COUNT(*) FROM reviews WHERE run_id=? AND code='unattended_resume'",
                                   (run_id,)).fetchone()[0]
-                if used >= MAX_UNATTENDED_RESUMES_PER_RUN:
+                if not only_retries and used >= MAX_UNATTENDED_RESUMES_PER_RUN:
                     raise UsageBlocked("run_unattended_resume_limit_reached")
                 # Counted across runs, so the first request after a restart is a probe:
                 # if it fails too, the run stops again after one request, not three.
                 in_a_row = 0
-                for row in db.execute("SELECT usable_media FROM attempts ORDER BY attempt_id DESC"):
+                for row in db.execute("SELECT attempt_id,usable_media,billing_class FROM attempts "
+                                      "ORDER BY attempt_id DESC"):
                     if row["usable_media"]:
                         break
+                    if row["attempt_id"] in retry_children and row["billing_class"] is not None:
+                        continue
                     in_a_row += 1
                 if in_a_row >= MAX_FAILURES_IN_A_ROW:
                     raise UsageBlocked("failures_in_a_row_limit_reached")
@@ -1274,7 +1363,8 @@ class Ledger:
                            "actual_source='unattended_max' WHERE attempt_id=?",
                            (now, max(row["reserve_micro"], row["estimate_micro"] or 0), row["attempt_id"]))
                 self._event(db, "unattended_max_charge", run_id, row["attempt_id"])
-            code = "unattended_restart" if restart else "unattended_resume"
+            code = ("unattended_restart" if restart else
+                    "unattended_retry_resume" if only_retries else "unattended_resume")
             db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
             self._event(db, code, run_id)
             db.execute("INSERT INTO reviews(at,run_id,code,note) VALUES(?,?,?,?)",
@@ -1413,6 +1503,7 @@ class Ledger:
             provider_retries = db.execute("SELECT p.* FROM provider_error_retries p JOIN attempts a ON a.attempt_id=p.parent_attempt_id WHERE a.run_id=? ORDER BY p.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM provider_error_retries ORDER BY at").fetchall()
             empty_retries = db.execute("SELECT e.* FROM empty_capture_retries e JOIN attempts a ON a.attempt_id=e.parent_attempt_id WHERE a.run_id=? ORDER BY e.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM empty_capture_retries ORDER BY at").fetchall()
             lost_retries = db.execute("SELECT l.* FROM lost_capture_retries l JOIN attempts a ON a.attempt_id=l.parent_attempt_id WHERE a.run_id=? ORDER BY l.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM lost_capture_retries ORDER BY at").fetchall()
+            auto_retries = db.execute("SELECT * FROM automatic_retries WHERE run_id=? ORDER BY child_attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM automatic_retries ORDER BY child_attempt_id").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
         return {
             "run_id": run_id,
@@ -1450,4 +1541,5 @@ class Ledger:
             "lost_capture_retries": [dict(r) for r in lost_retries],
             "provider_error_retries": [dict(r) for r in provider_retries],
             "empty_capture_retries": [dict(r) for r in empty_retries],
+            "automatic_retries": [dict(r) for r in auto_retries],
         }
