@@ -327,6 +327,75 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageBlocked, "request_limit"):
             self.ledger.reserve("queue2", "def456")
 
+    def lost_capture(self, source="abc123"):
+        """A paid, usable, settled capture that was never filed."""
+        if not self.ledger.report()["runs"]:
+            self.run_with(min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", source)
+        self.ledger.complete(attempt, 200, "request_premium")
+        self.ledger.mark_media(attempt, True)
+        return attempt
+
+    def test_lost_capture_retry_allows_one_rerequest_in_a_later_run(self):
+        attempt = self.lost_capture()
+        url = "https://www.instagram.com/p/abc123/"
+        direction = "Benny approved one re-capture of this save"
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_usable_unfiled"):
+            self.ledger.authorize_lost_capture_retry(attempt, url, direction)  # charge unreconciled
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        with self.assertRaisesRegex(ValueError, "user_direction"):
+            self.ledger.authorize_lost_capture_retry(attempt, url, "yes")
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_usable_unfiled"):
+            self.ledger.authorize_lost_capture_retry(attempt, "https://www.instagram.com/p/other1/", direction)
+        report = self.ledger.authorize_lost_capture_retry(attempt, url, direction)
+        self.assertEqual(report["lost_capture_retries"][0]["parent_attempt_id"], attempt)
+        self.assertIn("user_directed_lost_capture_retry_authorized", [e["code"] for e in report["events"]])
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized"):
+            self.ledger.authorize_lost_capture_retry(attempt, url, direction)
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+        self.assertEqual(self.ledger.lost_capture_retry_for("abc123"), attempt)
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue2", "abc123")
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                    recovery_source_url="https://www.instagram.com/reel/abc123/")
+        self.ledger.complete(retry, 200, "request_premium")
+        report = self.ledger.report("queue2")
+        self.assertEqual(report["attempt_records"][0]["recovery_of"], attempt)
+        self.assertIn("lost_capture_retry_reserved", [e["code"] for e in report["events"]])
+        self.assertIsNone(self.ledger.lost_capture_retry_for("abc123"))
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                recovery_source_url="https://www.instagram.com/reel/abc123/")
+        with self.assertRaisesRegex(UsageBlocked, "already"):
+            self.ledger.authorize_lost_capture_retry(attempt, url, direction)
+
+    def test_lost_capture_retry_counts_toward_the_request_limit(self):
+        attempt = self.lost_capture()
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        self.ledger.authorize_lost_capture_retry(attempt, "https://www.instagram.com/p/abc123/",
+                                                 "Benny approved one re-capture of this save")
+        self.ledger.create_run("queue2", "0.03", max_requests=1, min_gap_seconds=0)
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt,
+                                    recovery_source_url="https://www.instagram.com/p/abc123/")
+        self.ledger.complete(retry, 200, "request_premium")
+        with self.assertRaisesRegex(UsageBlocked, "request_limit"):
+            self.ledger.reserve("queue2", "def456")
+
+    def test_lost_capture_retry_refuses_filed_or_unusable_captures(self):
+        filed = self.lost_capture("abc123")
+        unusable = self.ledger.reserve("queue1", "def456")
+        self.ledger.complete(unusable, 200, "request_premium")
+        self.ledger.settle_from_price_list("queue1", "Cloud run settled at list price")
+        note = self.path.parent / "note.md"
+        note.write_text("filed", encoding="utf-8")
+        self.ledger.mark_filed(filed, note)
+        direction = "Benny approved one re-capture of this save"
+        for attempt, source in ((filed, "abc123"), (unusable, "def456")):
+            with self.assertRaisesRegex(UsageBlocked, "requires_settled_usable_unfiled"):
+                self.ledger.authorize_lost_capture_retry(
+                    attempt, f"https://www.instagram.com/p/{source}/", direction)
+        self.assertEqual(self.ledger.report()["lost_capture_retries"], [])
+
     def test_unauthenticated_release_refuses_every_other_failure(self):
         self.run_with(min_gap_seconds=0)
         self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 403, None,

@@ -83,7 +83,8 @@ immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
 media, or fast-spending hold. Do not create a fresh run to silently retry an already
 attempted source or work around a safety hold. The user-directed carousel music
-recheck and failed-capture retry below are narrow, separately audited exceptions.
+recheck, failed-capture retry and lost-capture re-capture below are narrow, separately
+audited exceptions.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
 ledger, using its `ts/caller/url/billed/plan/via` schema. `STRING_USAGE_LEDGER` in
@@ -394,6 +395,30 @@ python scripts/igx.py public-capture fetch 'https://www.instagram.com/p/SHORTCOD
 
 Reconcile its charge in the portal before another run. The original failed attempt
 and its charge stay in history.
+
+### One user-directed re-capture after the files were lost before filing
+
+A paid capture can succeed and then be lost before any note is filed: on 2026-11-09 a
+Codex cloud run captured two saves, then paused with their files in its own workspace,
+which nothing else can reach (raw media never goes through GitHub). If the user
+explicitly asks to capture such a source again, an offline authorization allows **one**
+more request for it. The original attempt must be settled with HTTP 200, usable media
+and a reconciled charge (portal or price list), and never filed. The authorization
+records the source URL and the user's own words in `lost_capture_retries`. It makes no
+request and needs no dedicated run: the source's next ordinary `fetch`, in any later
+run, finds the allowance and uses it, counted as one of that run's planned requests
+with its usual reserve, budget, pacing and holds, and `recovery_of` links it to the
+original. No second allowance or re-request is permitted.
+
+```bash
+python scripts/igx.py public-capture authorize-lost-capture-retry \
+  --url 'https://www.instagram.com/p/SHORTCODE/' \
+  --user-direction 'Exact user request to capture this post again'
+```
+
+A source the ledger has never seen (its first request happened in a workspace whose
+ledger was lost) needs no allowance; its first request here is an ordinary one. Record
+the lost request beside the ledger instead, from the portal's request log.
 
 ## Validate and process locally
 
