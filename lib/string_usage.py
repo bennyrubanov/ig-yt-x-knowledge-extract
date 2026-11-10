@@ -202,6 +202,10 @@ class Ledger:
                     parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     run_id TEXT NOT NULL, at REAL NOT NULL, review_note TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS lost_capture_retries (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    at REAL NOT NULL, source_url TEXT NOT NULL, user_direction TEXT NOT NULL
+                );
             """)
         self._migrate_recovery_schema()
         if self.path.exists():
@@ -375,7 +379,7 @@ class Ledger:
             if retry and recovery_of != retry["parent_attempt_id"]:
                 raise UsageBlocked("capture_retry_exact_source_only")
             dedicated_run = bool(recheck or retry)
-            auth_retry_allowed = False
+            auth_retry_allowed = lost_capture_allowed = False
             if recovery_of is None:
                 if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
                               (source_host, source_id)).fetchone():
@@ -404,10 +408,15 @@ class Ledger:
                     not dedicated_run and parent and source_match and source_match[1] == source_id
                     and db.execute("SELECT 1 FROM unauthenticated_retries WHERE parent_attempt_id=?",
                                    (recovery_of,)).fetchone())
+                # A paid capture lost before filing, re-requested once on the user's word.
+                lost_capture_allowed = bool(
+                    not dedicated_run and parent and source_match and source_match[1] == source_id
+                    and db.execute("SELECT 1 FROM lost_capture_retries WHERE parent_attempt_id=?",
+                                   (recovery_of,)).fetchone())
                 if (not parent or not (lost_response_allowed or soundtrack_allowed or retry_allowed
-                                       or auth_retry_allowed)
+                                       or auth_retry_allowed or lost_capture_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
-                        or not (auth_retry_allowed
+                        or not (auth_retry_allowed or lost_capture_allowed
                                 or transport_allowed or (parent_source and parent_source[0] == recovery_source_url))
                         or parent["recovery_of"] is not None
                         or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
@@ -419,10 +428,12 @@ class Ledger:
             dedicated = recheck or retry
             # A retry of a source String refused as unauthenticated is still one of
             # the run's planned sources, so it counts toward the request limit.
-            auth_parents = {r[0] for r in db.execute("SELECT parent_attempt_id FROM unauthenticated_retries")}
+            auth_parents = {r[0] for r in db.execute("SELECT parent_attempt_id FROM unauthenticated_retries "
+                                                     "UNION SELECT parent_attempt_id FROM lost_capture_retries")}
             original_count = len(rows) if dedicated else sum(
                 row["recovery_of"] is None or row["recovery_of"] in auth_parents for row in rows)
-            if (recovery_of is None or dedicated or auth_retry_allowed) and original_count >= run["max_requests"]:
+            if ((recovery_of is None or dedicated or auth_retry_allowed or lost_capture_allowed)
+                    and original_count >= run["max_requests"]):
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
             if consumed + run["max_request_micro"] > run["budget_micro"]:
@@ -440,6 +451,7 @@ class Ledger:
             attempt_id = cursor.lastrowid
             self._event(db, "soundtrack_recheck_reserved" if recheck else
                         "capture_retry_reserved" if retry else
+                        "lost_capture_retry_reserved" if lost_capture_allowed else
                         "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
             if recovery_of is not None:
                 db.execute("UPDATE transport_recoveries SET used_at=?,child_attempt_id=? WHERE parent_attempt_id=? AND run_id=? AND mode='paid'", (now,attempt_id,recovery_of,run_id))
@@ -636,6 +648,64 @@ class Ledger:
                        (parent_attempt_id, self._clock(), run_id, review_note))
             self._event(db, "lost_response_recovery_authorized", run_id, parent_attempt_id)
         return self.report(run_id)
+
+    def authorize_lost_capture_retry(self, parent_attempt_id: int, source_url: str,
+                                     user_direction: str) -> dict:
+        """One user-directed re-request of a paid capture whose files were lost before filing.
+
+        For a source whose page fetch succeeded with usable media and was settled
+        and reconciled, but whose local files were lost before any note was filed
+        (for example, they stayed in another agent's workspace). Only the user's
+        own request authorizes it. It makes no request: the source's next normal
+        capture, in any later run, uses it once as one of that run's planned
+        requests, with the usual reserve, budget, pacing and holds. The original
+        attempt and its charge stay in history and recovery_of links the
+        re-request. A second allowance or a second re-request is rejected.
+        """
+        if (isinstance(parent_attempt_id, bool) or not isinstance(parent_attempt_id, int)
+                or parent_attempt_id < 1):
+            raise ValueError("parent_attempt_id must be positive")
+        match = _SOURCE_URL.fullmatch(source_url) if isinstance(source_url, str) else None
+        if not match:
+            raise ValueError("exact canonical source URL required")
+        if (not isinstance(user_direction, str) or not 12 <= len(user_direction) <= 500
+                or any(ord(ch) < 32 for ch in user_direction)):
+            raise ValueError("user_direction must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold:
+                raise UsageBlocked("global_hold:" + hold)
+            parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            if (not parent or parent["source_host"] != "www.instagram.com"
+                    or parent["source_id"] != match[1] or parent["recovery_of"] is not None
+                    or parent["settled_at"] is None or parent["status_code"] != 200
+                    or parent["error_code"] or not parent["usable_media"]
+                    or parent["actual_micro"] is None or parent["note_path"] is not None):
+                raise UsageBlocked("lost_capture_retry_requires_settled_usable_unfiled_capture")
+            for table in ("lost_capture_retries", "capture_retries", "transport_recoveries",
+                          "recovery_allowances", "unauthenticated_retries", "soundtrack_rechecks"):
+                if db.execute(f"SELECT 1 FROM {table} WHERE parent_attempt_id=?",
+                              (parent_attempt_id,)).fetchone():
+                    raise UsageBlocked("lost_capture_retry_already_authorized_or_other_retry")
+            if db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (parent_attempt_id,)).fetchone():
+                raise UsageBlocked("lost_capture_retry_already_used")
+            db.execute("INSERT INTO lost_capture_retries VALUES(?,?,?,?)",
+                       (parent_attempt_id, self._clock(), source_url, user_direction))
+            self._event(db, "user_directed_lost_capture_retry_authorized", parent["run_id"],
+                        parent_attempt_id)
+        return self.report(parent["run_id"])
+
+    def lost_capture_retry_for(self, source_id: str, source_host: str = "www.instagram.com") -> int | None:
+        """The original attempt whose lost capture the user allowed one more request."""
+        source_id = _token(source_id, "source_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT a.attempt_id FROM attempts a JOIN lost_capture_retries l "
+                "ON l.parent_attempt_id=a.attempt_id WHERE a.source_host=? AND a.source_id=? "
+                "AND a.recovery_of IS NULL AND NOT EXISTS "
+                "(SELECT 1 FROM attempts r WHERE r.recovery_of=a.attempt_id)",
+                (source_host, source_id)).fetchone()
+        return row[0] if row else None
 
     def complete(self, attempt_id: int, status_code: int | None,
                  billed_request_type: str | None = None, *, actual_usd: object | None = None,
@@ -1182,6 +1252,7 @@ class Ledger:
             recs = db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations WHERE attempt_id IN (SELECT attempt_id FROM attempts WHERE run_id=?) ORDER BY attempt_id", (run_id,)).fetchall() if run_id else db.execute("SELECT attempt_id,evidence_sha256,evidence_path,review_note,source_url,portal_time,portal_status,portal_type,actual_micro,prior_pending,prior_status,prior_billing_class,prior_actual_micro,prior_error_code FROM reconciliations ORDER BY attempt_id").fetchall()
             runs = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM runs ORDER BY created_at").fetchall()
             auth_retries = db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries ORDER BY at").fetchall()
+            lost_retries = db.execute("SELECT l.* FROM lost_capture_retries l JOIN attempts a ON a.attempt_id=l.parent_attempt_id WHERE a.run_id=? ORDER BY l.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM lost_capture_retries ORDER BY at").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
         return {
             "run_id": run_id,
@@ -1216,4 +1287,5 @@ class Ledger:
             "capture_retries": [dict(r) for r in retries],
             "reconciliations": [dict(r) for r in recs],
             "unauthenticated_retries": [dict(r) for r in auth_retries],
+            "lost_capture_retries": [dict(r) for r in lost_retries],
         }
