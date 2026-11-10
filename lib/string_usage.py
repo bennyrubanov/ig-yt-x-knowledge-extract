@@ -206,6 +206,10 @@ class Ledger:
                     parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     at REAL NOT NULL, source_url TEXT NOT NULL, user_direction TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS empty_capture_retries (
+                    parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
+                    at REAL NOT NULL, source_url TEXT NOT NULL, user_direction TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS provider_error_retries (
                     parent_attempt_id INTEGER PRIMARY KEY REFERENCES attempts(attempt_id),
                     at REAL NOT NULL, source_url TEXT NOT NULL, user_direction TEXT NOT NULL
@@ -383,7 +387,7 @@ class Ledger:
             if retry and recovery_of != retry["parent_attempt_id"]:
                 raise UsageBlocked("capture_retry_exact_source_only")
             dedicated_run = bool(recheck or retry)
-            auth_retry_allowed = lost_capture_allowed = provider_error_allowed = False
+            auth_retry_allowed = lost_capture_allowed = provider_error_allowed = empty_capture_allowed = False
             if recovery_of is None:
                 if db.execute("SELECT 1 FROM attempts WHERE source_host=? AND source_id=?",
                               (source_host, source_id)).fetchone():
@@ -422,11 +426,17 @@ class Ledger:
                     not dedicated_run and parent and source_match and source_match[1] == source_id
                     and db.execute("SELECT 1 FROM provider_error_retries WHERE parent_attempt_id=?",
                                    (recovery_of,)).fetchone())
+                # A source String answered 200 for with no usable media, re-requested once on the user's word.
+                empty_capture_allowed = bool(
+                    not dedicated_run and parent and source_match and source_match[1] == source_id
+                    and db.execute("SELECT 1 FROM empty_capture_retries WHERE parent_attempt_id=?",
+                                   (recovery_of,)).fetchone())
                 if (not parent or not (lost_response_allowed or soundtrack_allowed or retry_allowed
                                        or auth_retry_allowed or lost_capture_allowed
-                                       or provider_error_allowed)
+                                       or provider_error_allowed or empty_capture_allowed)
                         or parent["source_host"] != source_host or parent["source_id"] != source_id
                         or not (auth_retry_allowed or lost_capture_allowed or provider_error_allowed
+                                or empty_capture_allowed
                                 or transport_allowed or (parent_source and parent_source[0] == recovery_source_url))
                         or parent["recovery_of"] is not None
                         or db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (recovery_of,)).fetchone()):
@@ -440,11 +450,12 @@ class Ledger:
             # the run's planned sources, so it counts toward the request limit.
             auth_parents = {r[0] for r in db.execute("SELECT parent_attempt_id FROM unauthenticated_retries "
                                                      "UNION SELECT parent_attempt_id FROM lost_capture_retries "
-                                                     "UNION SELECT parent_attempt_id FROM provider_error_retries")}
+                                                     "UNION SELECT parent_attempt_id FROM provider_error_retries "
+                                                     "UNION SELECT parent_attempt_id FROM empty_capture_retries")}
             original_count = len(rows) if dedicated else sum(
                 row["recovery_of"] is None or row["recovery_of"] in auth_parents for row in rows)
             if ((recovery_of is None or dedicated or auth_retry_allowed or lost_capture_allowed
-                    or provider_error_allowed)
+                    or provider_error_allowed or empty_capture_allowed)
                     and original_count >= run["max_requests"]):
                 raise UsageBlocked("request_limit")
             consumed = sum(self._envelope(row) for row in rows)
@@ -465,6 +476,7 @@ class Ledger:
                         "capture_retry_reserved" if retry else
                         "lost_capture_retry_reserved" if lost_capture_allowed else
                         "provider_error_retry_reserved" if provider_error_allowed else
+                        "empty_capture_retry_reserved" if empty_capture_allowed else
                         "recovery_reserved" if recovery_of else "reserved", run_id, attempt_id)
             if recovery_of is not None:
                 db.execute("UPDATE transport_recoveries SET used_at=?,child_attempt_id=? WHERE parent_attempt_id=? AND run_id=? AND mode='paid'", (now,attempt_id,recovery_of,run_id))
@@ -763,7 +775,7 @@ class Ledger:
             if db.execute("SELECT COUNT(*) FROM attempts WHERE source_host=? AND source_id=?",
                           (parent["source_host"], parent["source_id"])).fetchone()[0] != 1:
                 raise UsageBlocked("provider_error_retry_requires_single_attempt")
-            for table in ("provider_error_retries", "lost_capture_retries", "capture_retries",
+            for table in ("empty_capture_retries", "provider_error_retries", "lost_capture_retries", "capture_retries",
                           "transport_recoveries", "recovery_allowances", "unauthenticated_retries",
                           "soundtrack_rechecks"):
                 if db.execute(f"SELECT 1 FROM {table} WHERE parent_attempt_id=?",
@@ -781,6 +793,72 @@ class Ledger:
         with self._db() as db:
             row = db.execute(
                 "SELECT a.attempt_id FROM attempts a JOIN provider_error_retries l "
+                "ON l.parent_attempt_id=a.attempt_id WHERE a.source_host=? AND a.source_id=? "
+                "AND a.recovery_of IS NULL AND NOT EXISTS "
+                "(SELECT 1 FROM attempts r WHERE r.recovery_of=a.attempt_id)",
+                (source_host, source_id)).fetchone()
+        return row[0] if row else None
+
+    def authorize_empty_capture_retry(self, parent_attempt_id: int, source_url: str,
+                                      user_direction: str) -> dict:
+        """One user-directed re-request of a source whose only request came back empty.
+
+        For a source whose single attempt was settled with HTTP 200, no error code,
+        no usable media and no filed note. Only the user's own request authorizes it,
+        once per source ever. It makes no request: the source's next normal capture,
+        in a run with max_requests 1, uses it as that run's planned request, with the
+        usual reserve, budget, pacing, burn allowance and holds. The first attempt and
+        its charge stay in history and recovery_of links the retry. It never releases
+        a hold, and portal reconciliation is not required (the charge is already
+        counted at its settled value).
+        """
+        if (isinstance(parent_attempt_id, bool) or not isinstance(parent_attempt_id, int)
+                or parent_attempt_id < 1):
+            raise ValueError("parent_attempt_id must be positive")
+        match = _SOURCE_URL.fullmatch(source_url) if isinstance(source_url, str) else None
+        if not match:
+            raise ValueError("exact canonical source URL required")
+        if (not isinstance(user_direction, str) or not 12 <= len(user_direction) <= 500
+                or any(ord(ch) < 32 for ch in user_direction)):
+            raise ValueError("user_direction must be 12-500 printable characters")
+        with self._write() as db:
+            hold = db.execute("SELECT hold_reason FROM control WHERE singleton=1").fetchone()[0]
+            if hold:
+                raise UsageBlocked("global_hold:" + hold)
+            if db.execute("SELECT 1 FROM attempts WHERE settled_at IS NULL LIMIT 1").fetchone():
+                raise UsageBlocked("pending_attempt_requires_reconciliation")
+            parent = db.execute("SELECT * FROM attempts WHERE attempt_id=?", (parent_attempt_id,)).fetchone()
+            if (not parent or parent["source_host"] != "www.instagram.com"
+                    or parent["source_id"] != match[1] or parent["recovery_of"] is not None
+                    or parent["settled_at"] is None or parent["actual_micro"] is None
+                    or parent["status_code"] != 200 or parent["error_code"] or parent["usable_media"]
+                    or parent["note_path"] is not None):
+                raise UsageBlocked("empty_capture_retry_requires_settled_200_without_media")
+            if db.execute("SELECT 1 FROM attempts WHERE recovery_of=?", (parent_attempt_id,)).fetchone():
+                raise UsageBlocked("empty_capture_retry_already_used")
+            if db.execute("SELECT COUNT(*) FROM attempts WHERE source_host=? AND source_id=?",
+                          (parent["source_host"], parent["source_id"])).fetchone()[0] != 1:
+                raise UsageBlocked("empty_capture_retry_requires_single_attempt")
+            if db.execute("SELECT 1 FROM empty_capture_retries WHERE source_url=?", (source_url,)).fetchone():
+                raise UsageBlocked("empty_capture_retry_already_authorized_for_source")
+            for table in ("empty_capture_retries", "provider_error_retries", "lost_capture_retries",
+                          "capture_retries", "transport_recoveries", "recovery_allowances",
+                          "unauthenticated_retries", "soundtrack_rechecks"):
+                if db.execute(f"SELECT 1 FROM {table} WHERE parent_attempt_id=?",
+                              (parent_attempt_id,)).fetchone():
+                    raise UsageBlocked("empty_capture_retry_already_authorized_or_other_retry")
+            db.execute("INSERT INTO empty_capture_retries VALUES(?,?,?,?)",
+                       (parent_attempt_id, self._clock(), source_url, user_direction))
+            self._event(db, "user_directed_empty_capture_retry_authorized", parent["run_id"],
+                        parent_attempt_id)
+        return self.report(parent["run_id"])
+
+    def empty_capture_retry_for(self, source_id: str, source_host: str = "www.instagram.com") -> int | None:
+        """The empty attempt whose result the user allowed one more request for."""
+        source_id = _token(source_id, "source_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT a.attempt_id FROM attempts a JOIN empty_capture_retries l "
                 "ON l.parent_attempt_id=a.attempt_id WHERE a.source_host=? AND a.source_id=? "
                 "AND a.recovery_of IS NULL AND NOT EXISTS "
                 "(SELECT 1 FROM attempts r WHERE r.recovery_of=a.attempt_id)",
@@ -1333,6 +1411,7 @@ class Ledger:
             runs = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM runs ORDER BY created_at").fetchall()
             auth_retries = db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries WHERE run_id=? ORDER BY at", (run_id,)).fetchall() if run_id else db.execute("SELECT parent_attempt_id,run_id,at,review_note FROM unauthenticated_retries ORDER BY at").fetchall()
             provider_retries = db.execute("SELECT p.* FROM provider_error_retries p JOIN attempts a ON a.attempt_id=p.parent_attempt_id WHERE a.run_id=? ORDER BY p.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM provider_error_retries ORDER BY at").fetchall()
+            empty_retries = db.execute("SELECT e.* FROM empty_capture_retries e JOIN attempts a ON a.attempt_id=e.parent_attempt_id WHERE a.run_id=? ORDER BY e.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM empty_capture_retries ORDER BY at").fetchall()
             lost_retries = db.execute("SELECT l.* FROM lost_capture_retries l JOIN attempts a ON a.attempt_id=l.parent_attempt_id WHERE a.run_id=? ORDER BY l.at", (run_id,)).fetchall() if run_id else db.execute("SELECT * FROM lost_capture_retries ORDER BY at").fetchall()
         pending = [row for row in rows if row["settled_at"] is None]
         return {
@@ -1370,4 +1449,5 @@ class Ledger:
             "unauthenticated_retries": [dict(r) for r in auth_retries],
             "lost_capture_retries": [dict(r) for r in lost_retries],
             "provider_error_retries": [dict(r) for r in provider_retries],
+            "empty_capture_retries": [dict(r) for r in empty_retries],
         }
