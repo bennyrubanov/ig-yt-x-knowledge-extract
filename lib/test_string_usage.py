@@ -492,6 +492,100 @@ class StringUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageBlocked, "requires_settled_usable_unfiled"):
             self.ledger.authorize_lost_capture_retry(attempt, url, "Benny asked to try this reel again")
 
+    def empty_capture(self, source="abc123", clear_hold=True):
+        """A settled HTTP 200 that carried no usable media, with any hold cleared as a release would."""
+        if not self.ledger.report()["runs"]:
+            self.run_with(min_gap_seconds=0)
+        attempt = self.ledger.reserve("queue1", source)
+        self.ledger.complete(attempt, 200, "request_premium", actual_usd="0.003")
+        self.ledger.mark_media(attempt, False)
+        if clear_hold:
+            with sqlite3.connect(self.path) as db:
+                db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        return attempt
+
+    def test_empty_capture_retry_allows_one_rerequest_once_per_source(self):
+        attempt = self.empty_capture()
+        url = "https://www.instagram.com/p/abc123/"
+        direction = "Benny said yes, retry this post once more"
+        with self.assertRaisesRegex(ValueError, "user_direction"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, "yes")
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_200"):
+            self.ledger.authorize_empty_capture_retry(attempt, "https://www.instagram.com/p/other1/", direction)
+        report = self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        self.assertEqual(report["empty_capture_retries"][0]["parent_attempt_id"], attempt)
+        self.assertIn("user_directed_empty_capture_retry_authorized", [e["code"] for e in report["events"]])
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        self.ledger.create_run("queue2", "0.03", max_requests=1, min_gap_seconds=0)
+        self.assertEqual(self.ledger.empty_capture_retry_for("abc123"), attempt)
+        with self.assertRaisesRegex(UsageBlocked, "source_already_attempted"):
+            self.ledger.reserve("queue2", "abc123")
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        self.ledger.complete(retry, 200, "request_premium")
+        report = self.ledger.report("queue2")
+        self.assertEqual(report["attempt_records"][0]["recovery_of"], attempt)
+        self.assertIn("empty_capture_retry_reserved", [e["code"] for e in report["events"]])
+        self.assertIsNone(self.ledger.empty_capture_retry_for("abc123"))
+        with self.assertRaisesRegex(UsageBlocked, "recovery_not_authorized"):
+            self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        # a second use is refused, whatever happened to the retry
+        with self.assertRaisesRegex(UsageBlocked, "already"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_200"):
+            self.ledger.authorize_empty_capture_retry(retry, url, direction)
+
+    def test_empty_capture_retry_refuses_holds_unsettled_and_other_outcomes(self):
+        direction = "Benny said yes, retry this post once more"
+        url = "https://www.instagram.com/p/abc123/"
+        held = self.empty_capture(clear_hold=False)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason='media_unusable',hold_at=1 WHERE singleton=1")
+        with self.assertRaisesRegex(UsageBlocked, "global_hold"):
+            self.ledger.authorize_empty_capture_retry(held, url, direction)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        pending = self.ledger.reserve("queue1", "jkl012")
+        with self.assertRaisesRegex(UsageBlocked, "pending_attempt_requires_reconciliation"):
+            self.ledger.authorize_empty_capture_retry(held, url, direction)
+        self.ledger.complete(pending, 200, "request_premium")
+        self.ledger.mark_media(pending, True)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_200"):  # usable media
+            self.ledger.authorize_empty_capture_retry(pending, "https://www.instagram.com/p/jkl012/", direction)
+        failed = self.ledger.reserve("queue1", "def456")
+        self.ledger.complete(failed, 502, None, actual_usd="0.006", error="bad gateway")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE control SET hold_reason=NULL,hold_at=NULL WHERE singleton=1")
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_200"):  # a 5xx, not an empty 200
+            self.ledger.authorize_empty_capture_retry(failed, "https://www.instagram.com/p/def456/", direction)
+        self.assertEqual(self.ledger.report()["empty_capture_retries"], [])
+
+    def test_empty_capture_retry_refuses_filed_multi_attempt_and_other_retry(self):
+        direction = "Benny said yes, retry this post once more"
+        attempt = self.empty_capture()
+        url = "https://www.instagram.com/p/abc123/"
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE attempts SET note_path='/tmp/note.md' WHERE attempt_id=?", (attempt,))
+        with self.assertRaisesRegex(UsageBlocked, "requires_settled_200"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE attempts SET note_path=NULL WHERE attempt_id=?", (attempt,))
+            db.execute("INSERT INTO provider_error_retries VALUES(?,?,?,?)",
+                       (attempt, 1.0, url, "Benny asked for a different retry"))
+        with self.assertRaisesRegex(UsageBlocked, "already_authorized_or_other_retry"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        with sqlite3.connect(self.path) as db:
+            db.execute("DELETE FROM provider_error_retries")
+        # a source with two attempts is refused
+        self.ledger.create_run("queue2", "0.03", min_gap_seconds=0)
+        self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+        retry = self.ledger.reserve("queue2", "abc123", recovery_of=attempt, recovery_source_url=url)
+        self.ledger.complete(retry, 200, "request_premium")
+        with self.assertRaisesRegex(UsageBlocked, "already"):
+            self.ledger.authorize_empty_capture_retry(attempt, url, direction)
+
     def test_unauthenticated_release_refuses_every_other_failure(self):
         self.run_with(min_gap_seconds=0)
         self.ledger.complete(self.ledger.reserve("queue1", "abc123"), 403, None,

@@ -83,7 +83,7 @@ immutable. A new run requires all earlier attempts to be settled **and their
 actual charges reconciled**. It cannot clear an unresolved provider, billing,
 media, or fast-spending hold. Do not create a fresh run to silently retry an already
 attempted source or work around a safety hold. The user-directed carousel music
-recheck, failed-capture retry, lost-capture re-capture and provider-error retry below are
+recheck, failed-capture retry, lost-capture re-capture, provider-error retry and empty-capture retry below are
 narrow, separately audited exceptions.
 
 `--shared-ledger PATH` on `fetch` also appends to an existing String-wide JSONL
@@ -444,6 +444,28 @@ the retry's own charge as usual.
 ```bash
 python scripts/igx.py public-capture authorize-provider-error-retry \
   --url 'https://www.instagram.com/reel/SHORTCODE/' \
+  --user-direction 'Exact user request to try this source again'
+```
+
+### One user-directed retry after String answered 200 with no usable media
+
+When the only request for a source settled with HTTP 200, no error code and no usable
+media, and the capture reconciliation route above cannot apply (for example the run's
+other attempts cannot be reconciled to String's portal), the user can explicitly ask for
+**one** more request. The offline authorization requires: no global hold (it never
+releases one), no unsettled attempt anywhere, exactly one attempt for the source with
+no filed note, and no earlier authorization of any kind for that source. It is allowed
+once per source, ever. It stores the source URL and the user's own words (12-500
+printable characters) in `empty_capture_retries` and makes no request. The source's next
+ordinary `fetch` uses it once; run it in a new run created with `--max-requests 1`.
+`recovery_of` links the retry to the first attempt, whose charge stays in history, and
+the retry has the run's usual reserve, budget, spacing, burn allowance and holds. It is
+shown under `empty_capture_retries` in `usage`. If the retry also returns nothing, do
+not authorize another.
+
+```bash
+python scripts/igx.py public-capture authorize-empty-capture-retry \
+  --url 'https://www.instagram.com/p/SHORTCODE/' \
   --user-direction 'Exact user request to try this source again'
 ```
 

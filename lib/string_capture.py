@@ -314,7 +314,7 @@ def capture(url: str, run: str, ledger: Ledger, directory: Path, shared_ledger: 
         raise CaptureStopped("string_access_check_required")
     if recovery_of is None:
         recovery_of = (ledger.unauthenticated_retry_for(mid) or ledger.lost_capture_retry_for(mid)
-                       or ledger.provider_error_retry_for(mid))
+                       or ledger.provider_error_retry_for(mid) or ledger.empty_capture_retry_for(mid))
     attempt = ledger.reserve(run, mid, recovery_of=recovery_of,
                              recovery_source_url=canonical if recovery_of is not None else None)
     try:
@@ -532,6 +532,12 @@ def main(argv=None) -> int:
                                " (provider_error), on the user's request; the source's next capture uses it")
     perr.add_argument("--url", required=True)
     perr.add_argument("--user-direction", required=True)
+    empty = sub.add_parser("authorize-empty-capture-retry",
+                           help="Offline one-time re-request of a source whose only request answered 200"
+                                " with no usable media, on the user's request; the source's next capture"
+                                " (in a run with max-requests 1) uses it")
+    empty.add_argument("--url", required=True)
+    empty.add_argument("--user-direction", required=True)
     transport = sub.add_parser("authorize-transport-recovery",help="Explicit audited Cloud transport recovery")
     transport.add_argument("--run",required=True)
     transport.add_argument("--attempt-id",type=int,required=True)
@@ -625,6 +631,14 @@ def main(argv=None) -> int:
                     raise CaptureStopped("provider_error_retry_needs_exactly_one_original_attempt")
                 result = ledger.authorize_provider_error_retry(prior[0]["attempt_id"], canonical,
                                                                args.user_direction)
+            elif args.command == "authorize-empty-capture-retry":
+                canonical, mid = canonical_source(args.url)
+                prior = [a for a in ledger.report()["attempt_records"]
+                         if a["source_id"] == mid and a["recovery_of"] is None]
+                if len(prior) != 1:
+                    raise CaptureStopped("empty_capture_retry_needs_exactly_one_original_attempt")
+                result = ledger.authorize_empty_capture_retry(prior[0]["attempt_id"], canonical,
+                                                              args.user_direction)
             elif args.command == "soundtrack-recheck":
                 result = soundtrack_recheck(args.manifest, args.run, ledger, args.output_dir,
                                              args.shared_ledger)
