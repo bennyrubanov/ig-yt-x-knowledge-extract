@@ -51,6 +51,7 @@ from pathlib import Path
 
 from gemini_api import DEFAULT_KEY_ENV, DEFAULT_MODELS, BillingLinked, generate, tier_check
 from local_config import REPO_ROOT, downloads_dir
+from notion_extract_inbox import looks_like_creator_only, strip_trailing_creator
 
 BRIEF = REPO_ROOT / "docs" / "note-writer-brief.md"
 FILING = REPO_ROOT / "docs" / "obsidian-filing.md"
@@ -81,17 +82,19 @@ Rules that always hold:
 - Keep the saver's private life out: relationships, family, feelings, health records, legal plans. Replace a private person's name with a role ("a friend"). Public figures and creators keep their names.
 - Summarize in your own words. Quote at most one short phrase (under 15 words) per note.
 - Keep the distinctive numbers and names, written as the material gives them. Never add a number that is not in the material.
-- Mark claims as claims. Flag hype, sponsorship, a sales call to action or weak evidence in one clause. A health, diet, supplement, medical, money or price claim always gets one key takeaway starting "Claim, not verified here:" that says what isn't verified (an anecdote, a self-report, a seller's own promotion, a price with no date).
+- Mark claims as claims. Flag hype, sponsorship, an affiliate link, a product the creator sells, a sales call to action or weak evidence in one clause. A health, diet, supplement, medical, money or price claim always gets one key takeaway starting "Claim, not verified here:" that says what isn't verified (an anecdote, a self-report, a seller's own promotion, a price with no date). So does a number, result, ranking or rule the creator states without showing the evidence (growth or follower figures, scores, before-and-after results, how an algorithm works).
 - Do what the saved prompt asks, in `prompt_answer`: a short evidence-based verdict for "is this true?", the list for "save the brands". With no prompt, say in `prompt_answer` what the note does with the save. Never say anything was filed, added, saved or sent anywhere: the agent that checks your draft does the filing.
 - `tldr` holds only content bullets. Never repeat the "Your prompt" bullet there; the program writes it. `prompt_answer` is only the answer: don't restate the saved prompt, which the program prints right before it.
 - Facts, names, numbers and dates come only from the material, even ones you know from elsewhere.
+- Describe only what the material holds. With no attached images, never say what a picture, slide or frame shows; with no transcript, never say what the speaker says. Say what is missing instead.
 - `author` is the creator exactly as the material or the save's details name them (a handle or a name written there). If neither names the creator, leave `author` empty. Never guess a handle from a name, a voice, a logo or what you know from elsewhere: the program drops an author the material doesn't contain.
 - Write a link only when the material contains it, copied exactly. Never add a [[wikilink]] or a URL from anywhere else: the program adds the source and hub links and removes any other link the material doesn't contain.
 - Add your own critical reading where it helps the reader decide what to believe or do (a selection effect, a small sample, a missing time frame, who profits from the claim), and present it as a caveat, not as something the source said.
 - Choose 1 or 2 topics by what the source itself is about; add a third only when the source clearly belongs there too. A project or purpose the saved prompt names (an app, a business, a trip) belongs in `projects`, not in `topics`, unless the source is about that subject.
+- A hub needs the source's main subject to be what that hub holds (the brief describes each). A passing mention doesn't count: money, a price or a business doesn't make a source wealth (investing, tickers, money books); a video, content or marketing idea isn't building-an-app (shipping and hosting software); a creator, a wedding or a song isn't people (a hub for one particular person); animals, a country or a trip isn't geopolitics (maps, chokepoints, dated events); a recipe is cooking, not health. When no hub fits well, use good-info alone.
 - If answering needs something the material does not have (the saver's own projects, a page the source only links to, a recipe it only names), answer what the material supports and say plainly what is missing. Never guess.
 - Plain, concrete English. Each bullet is one or two sentences, with no headings, tables or nested lists inside a field.
-- When the save's details give a saved title instead of a saved prompt, return in `prompt` the exact words the saver typed before the platform's auto-title, or "(none — URL only.)" when the title is just the creator's name or the page's own title.
+- When the save's details give a saved title instead of a saved prompt, return in `prompt` the exact words the saver typed before the platform's auto-title, or "(none — URL only.)" when the title is just the creator's name or the page's own title. When they give the words before the platform's auto-title, return only the words the saver typed, without the creator's name, or "(none — URL only.)" when they are only the creator's name. Never return the caption or the post's own text as the prompt.
 """
 
 
@@ -250,18 +253,49 @@ def image_parts(images: list[Path], limit: int) -> tuple[list[dict], dict[str, P
     return parts, named
 
 
-def explicit_prompts(item: dict) -> list[str] | None:
-    """The saved prompts, or None when they weren't split out and `title` holds them.
+# Instagram and X share titles: `{typed words} {creator} on Instagram: "{caption}"`.
+SHARE_TITLE = re.compile(r"^(?P<prefix>.*?)\s+on (?:Instagram|X):", re.IGNORECASE | re.DOTALL)
 
-    An empty `prompts` beside a non-empty `title` counts as not split: on 2026-11-03 a
-    run passed `prompts: []` with every raw saved title, and six typed prompts would
-    have gone unanswered."""
-    if "prompts" not in item:
+
+def share_title_prefix(title: str) -> str | None:
+    """The words before a share title's `on Instagram:` or `on X:`, or None for other titles."""
+    match = SHARE_TITLE.match(title.strip())
+    return match["prefix"].strip() if match else None
+
+
+def prompts_from_title(title: str) -> list[str] | None:
+    """The saver's typed words, split from a share title by the program.
+
+    [the typed words], [] when only the creator precedes `on Instagram:`, or None when
+    the title isn't a share title or the split is unsure (a short prefix such as
+    "Content idea Tony"), so the model reads it. Same split as the Notion inbox poller.
+    On 2026-11-10 the model, reading raw titles, put the caption in `prompt` for about
+    20 saves and missed typed prompts that came before a creator's name."""
+    prefix = share_title_prefix(title)
+    if prefix is None:
         return None
+    if not looks_like_creator_only(prefix):
+        typed = strip_trailing_creator(prefix)
+        if typed:
+            return [typed]
+    if len(prefix.split()) <= 2 or prefix.startswith("@") or "|" in prefix:
+        return []
+    return None
+
+
+def explicit_prompts(item: dict) -> list[str] | None:
+    """The saved prompts, or None when the model has to read them from `title`.
+
+    With no prompts split out (`prompts` missing or empty), a share title is split here
+    and any other title is left to the model: on 2026-11-03 a run passed `prompts: []`
+    with every raw saved title, and six typed prompts would have gone unanswered."""
     prompts = [str(p).strip() for p in item.get("prompts") or [] if str(p).strip()]
-    if not prompts and str(item.get("title") or "").strip():
-        return None
-    return prompts
+    if prompts:
+        return prompts
+    title = str(item.get("title") or "").strip()
+    if title:
+        return prompts_from_title(title)
+    return None if "prompts" not in item else []
 
 
 def typed_text(item: dict) -> list[str]:
@@ -275,7 +309,11 @@ def save_text(item: dict, material_text: str, image_names: list[str]) -> str:
     if item.get("author"):
         lines.append(f"Author: {item['author']}")
     prompts = explicit_prompts(item)
-    if prompts is None and item.get("title"):
+    prefix = share_title_prefix(str(item.get("title") or ""))
+    if prompts is None and prefix:
+        lines.append("Words before the platform's auto-title, the creator's name perhaps after words the saver "
+                     f"typed (no separate prompt given): {json.dumps(prefix, ensure_ascii=False)}")
+    elif prompts is None and item.get("title"):
         lines.append(f"Saved title (no separate prompt given): {json.dumps(item['title'], ensure_ascii=False)}")
     elif prompts:
         lines.append("Saved prompts, oldest first:")
@@ -591,7 +629,8 @@ class Drafter:
         if prompts is None:
             guess = one_line(data.get("prompt", ""))
             title = str(item.get("title", ""))
-            prompts = [guess] if guess and guess != NO_PROMPT and guess in title else []
+            allowed = share_title_prefix(title) or title  # never the caption
+            prompts = [guess] if guess and guess != NO_PROMPT and guess in allowed else []
         prompt = " | later save: ".join(prompts) or NO_PROMPT
         folder = (item.get("folder") or ARCHIVE.get(item["type"]) or data["topics"][0]).strip("/")
         slug = kebab(data.get("slug") or data["title"]) or "note"
