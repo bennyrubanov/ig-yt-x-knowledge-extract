@@ -40,7 +40,7 @@ Never commit, log, echo, or paste cookie contents.
 
 ## Triggers
 
-- User pastes `instagram.com/reel/` or `instagram.com/p/` (carousel) or YouTube or `x.com` / `twitter.com` status URL
+- User pastes `instagram.com/reel/` or `instagram.com/p/` (carousel) or YouTube or `x.com` / `twitter.com` status URL or a `reddit.com` post or share link
 - “Transcribe this reel/video/post”
 - Legitimacy / fact-check / chart review
 - Investment case / thesis research
@@ -59,6 +59,7 @@ python scripts/igx.py reel "<REEL_URL>"
 python scripts/igx.py carousel "<POST_URL>"
 python scripts/igx.py youtube "<YOUTUBE_URL>"
 python scripts/igx.py twitter "<TWEET_URL>"
+python scripts/igx.py reddit "<REDDIT_URL>"   # post + comments from its public feed
 python scripts/igx.py batch URL URL   # Instagram safety guard applies across runs
 python scripts/igx.py status --jsonl FILE
 ```
