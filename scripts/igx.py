@@ -17,6 +17,7 @@ COMMANDS = {
     "note-check": "note_check",
     "gemini-tier": "gemini_api",
     "twitter": "transcribe_twitter",
+    "reddit": "reddit_fetch",
     "batch": "extract_queue",
     "status": "extract_status",
     "reextract": "reextract_frames",
@@ -30,7 +31,7 @@ COMMANDS = {
 def _usage() -> None:
     print(
         "Usage: python scripts/igx.py "
-        "{reel|carousel|youtube|youtube-gemini|note-gemini|note-check|gemini-tier|twitter|batch|status|reextract|cleanup|ocr-backfill|ig-safety|public-capture} ...",
+        "{reel|carousel|youtube|youtube-gemini|note-gemini|note-check|gemini-tier|twitter|reddit|batch|status|reextract|cleanup|ocr-backfill|ig-safety|public-capture} ...",
         file=sys.stderr,
     )
     print("Unix aliases: transcribe-reel.sh, transcribe-batch.sh, extract-status.sh, …", file=sys.stderr)
