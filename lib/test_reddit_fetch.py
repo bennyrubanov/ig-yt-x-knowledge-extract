@@ -215,6 +215,11 @@ class MainTests(unittest.TestCase):
         with patch.object(reddit_fetch, "get", lambda url, log=None: ("https://www.reddit.com/r/x/", b"")), \
                 patch("sys.stderr", io.StringIO()):
             self.assertEqual(reddit_fetch.main(["https://www.reddit.com/r/x/", "/tmp/unused"]), 2)
+        share = "https://www.reddit.com/r/x/s/AbC123"
+        with patch.object(reddit_fetch, "get", lambda url, log=None: (share, b"<html>")), \
+                patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(reddit_fetch.main([share, "/tmp/unused"]), 3)
+            self.assertIn("share link did not lead to a post", err.getvalue())
 
 
 if __name__ == "__main__":

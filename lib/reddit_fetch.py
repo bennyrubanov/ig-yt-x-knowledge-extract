@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import http.client
 import json
 import re
 import sys
@@ -81,7 +82,7 @@ def get(url: str, log=None) -> tuple[str, bytes]:
                 if int(retry_after) > MAX_WAIT:
                     raise RedditRefused(f"{reason}, Retry-After {retry_after}s") from None
                 wait = max(wait, int(retry_after))
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
             reason = f"network error ({getattr(exc, 'reason', exc)})"
             wait = WAITS[n] if n < len(WAITS) else 0
         if n == tries - 1:
@@ -228,6 +229,8 @@ def capture(url: str, out: Path | None) -> dict:
     final, _ = get(url)  # resolves share and short links
     m = POST_RE.search(final)
     if not m:
+        if re.search(r"/s/[A-Za-z0-9]+", final):  # Reddit answered the share link without redirecting
+            raise RedditRefused("the share link did not lead to a post")
         raise ValueError(f"Not a Reddit post link: {final}")
     sub, post_id = m.groups()
     _, body = get(f"https://www.reddit.com/{sub}/comments/{post_id}/.rss?limit=500")
