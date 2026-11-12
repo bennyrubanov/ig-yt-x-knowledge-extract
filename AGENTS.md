@@ -20,7 +20,7 @@ Read this file first. Auth (no Instagram OAuth): [docs/auth.md](docs/auth.md). E
 | Codex / OpenCode / Aider | this file (`AGENTS.md`) |
 | Gemini CLI | [GEMINI.md](GEMINI.md) → this file |
 
-**This file is the source of truth.** Do not put pipeline rules only in `~/.cursor/` or `~/.claude/` — those homes are one machine and one tool. Personal cross-repo skills stay in `~/Coding_Projects/cursor-skills` (not this public GitHub repo). Detail: [docs/agent-workflow.md](docs/agent-workflow.md).
+**This file is the source of truth.** Do not put pipeline rules only in `~/.cursor/` or `~/.claude/` — those homes are one machine and one tool. Personal cross-repo skills stay in the operator's private skills library, not in this public repo. Detail: [docs/agent-workflow.md](docs/agent-workflow.md).
 
 Obsidian is **knowledge-only** — summaries, analysis, wikilinks. All tooling stays in this repo.
 
