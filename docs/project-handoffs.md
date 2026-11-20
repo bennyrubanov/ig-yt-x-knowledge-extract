@@ -13,6 +13,15 @@ This is an agent filing convention, not an unattended sync service.
 | Music production techniques and samples | Follow the existing [music handoff](obsidian-filing.md#music-production-handoff); technique references and retained audio are distinct deliverables. |
 | Product/business findings | File every idea the product could act on as an entry in that repo's own backlog or task system (its format, its re-open triggers), not only as an intake pointer; the intake pointer stays as the index. Extend the existing owner rather than open a parallel list. A content-production method may also belong in the content repo, without transferring ownership of product claims or campaigns. |
 
+## Distill, don't append
+
+A destination repo may keep one principles file: the advice its saves agree on, each
+principle with its sources. When it does, a save updates that file instead of adding another
+list row: the source joins the principle it backs, a new angle becomes a sentence, and an
+idea nothing covers becomes a one-line candidate that a later save or a periodic tidy turns
+into a principle. Something to act on (a recipe, a place, a ticker, a feature) still goes
+where the repo keeps those. Local instructions name the files and the tidy schedule.
+
 ## Every save is the owner's take
 
 A saved source is deliberate. Assume the owner knows their existing efforts: the save is either a new way to approach one of them or a new idea. Find the related effort in the destination repo, file the item beside it and say what the new angle is; never close a save as already covered.
@@ -29,8 +38,8 @@ Lean toward filing. A save the owner sent in goes to every repository it fits, i
    guide is enough when copying the analysis would add no value.
 3. Search by source ID/URL and topic. Update existing intake, guide or backlog entries;
    multiple relevant repos may link one source, but avoid competing task owners.
-   Beyond the intake pointer, also file the item in the repo's working home when one
-   fits: a destination file, idea folder, technique or exercise list, evidence table,
+   Where the repo keeps a principles file, update it as above instead of adding an intake
+   row. Beyond that, also file the item in the repo's working home when one fits: a destination file, idea folder, technique or exercise list, evidence table,
    research queue or backlog row, in that file's own format.
 4. Make the guide discoverable from the repo's agent entry point or README. For future
    retrieval, name the actual vault root/hubs and existing repo research owners in
