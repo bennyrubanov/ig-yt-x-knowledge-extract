@@ -32,6 +32,12 @@ python scripts/igx.py public-capture init --run approved-queue-run \
 python scripts/igx.py public-capture check-access --run approved-queue-run
 ```
 
+**Which Claude account uses which mode** (2026-11-20). bennyrubanov112@gmail.com: String is a
+network secret and `STRING_AI_API_KEY=proxy-injected` (above). benny@bennyrubanov.com: the
+real key is a plain variable `STRING_AI_API_KEY` in its Default environment, with
+`STRING_USE_HTTPS_PROXY=1` so String's calls still go through the cloud proxy. Where each
+account keeps the key: ai-agent-skills `skills/guided-secret-rotation/key-locations.md`.
+
 **Codex or another managed proxy with its own secret placeholder.** Configure
 `STRING_AI_API_KEY` as the environment's HTTP/network secret scoped to
 `https://request.usestring.ai` and retain the placeholder that environment supplies.
