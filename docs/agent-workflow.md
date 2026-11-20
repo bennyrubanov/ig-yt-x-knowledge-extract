@@ -575,7 +575,7 @@ A save whose Notion title is empty or just "Instagram" is not a sign the post is
 
 ## Journal branch and failed-capture retries (2026-10-15)
 
-- **Create the change journal's branch before marking rows.** The marking step writes each journal entry to a branch through the GitHub API; if the branch does not exist yet, the first write fails with a 404 and no Notion row changes. Create it from the journal repository's main branch, mark, then merge the journal PR and delete the branch.
+- **Create the change journal's branch before marking rows.** The marking step writes each journal entry to a branch through the GitHub API; if the branch does not exist yet, the first write fails with a 404 and no Notion row changes. Create it from the journal repository's main branch, mark, then merge the journal PR and delete the branch. (Since 2026-11-20 the journal can instead live on a long-lived state branch that the run pushes to directly, with no PR; local instructions say which.)
 - **One retry for a failed capture, only on the user's word** (superseded on 2026-11-10 by [automatic retries](#failed-saves-are-retried-and-filed-2026-11-10)). A paid page fetch that gave no usable media can now be retried once per source through `authorize-capture-retry` ([public capture](public-capture.md#one-user-directed-retry-after-a-failed-media-capture)). Record the user's own words as the direction. An agent safety check may treat adding or using this exception as security-sensitive; it needs the user's explicit yes to the exception itself, not only to the queue run.
 
 ## Failed saves are retried and filed (2026-11-10)
