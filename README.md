@@ -1,16 +1,71 @@
 # ig-yt-x-knowledge-extract
 
-For authorized Instagram retrieval after the account incident, use the [metered String public-capture path](docs/public-capture.md). It does not use Instagram login cookies. Legacy authenticated extraction remains held; it is not a fallback.
+Turns saved Instagram, YouTube and X posts into searchable notes. It downloads the media, pulls the caption, samples frames, reads on-screen text with OCR and transcribes speech locally with Whisper. Then it gives an AI agent (Claude Code, Codex, Cursor or Gemini CLI) everything it needs to write a reviewed note and file it in the right place in an Obsidian knowledge vault.
 
-Download Instagram, YouTube, or X media, pull captions and frames, transcribe with Whisper, and file notes in Obsidian. Built for agent-assisted review (charts, on-screen text, spoken claims).
+It has filed more than 2,000 notes in my own vault so far, most of them from saved Instagram posts, plus YouTube videos and X threads.
 
-No paid APIs. Cookies stay on your machine. Scripts warn if `ollama ps` shows a loaded model (Whisper also needs RAM).
+## What it does
 
-**Point an agent at this clone** (Claude Code, Cursor, Codex, Gemini CLI, …): they should read `AGENTS.md` first. Instagram is **not** an OAuth grant — [docs/auth.md](docs/auth.md).
+- **One CLI for every source.** `igx` handles Instagram reels and carousels, YouTube videos and X posts, plus batch queues with a status scoreboard.
+- **Local media processing.** ffmpeg frame sampling (fixed interval or scene changes), Tesseract OCR on frames and slides, and Whisper or faster-whisper transcription with no transcription API.
+- **Notes written for agents and people.** A fixed note format (TL;DR, what was said, claims vs evidence, related links), a checker that runs before anything is filed, and optional Gemini first drafts.
+- **Queue sources.** Instagram Saved exports, a Notion paste inbox, or plain URL lists.
+- **Guardrails.** A hard spend ceiling per run on metered capture, cross-process rate limits and a safety hold for Instagram, usage logging before every billed request, and 239 unit tests.
 
-## Instagram account incident — read before setup
+## How it works
 
-On September 27, an account used for extraction was marked Locked and received an explicit automated-behavior warning. The user reports unlocking after dismissing the phone notice; automated extraction remains paused. [Incident and operating rules](docs/instagram-account-incident.md). Working playback or a dismissed warning does not establish safe automation or authorize cookie export/resumption. The setup and usage commands below are reference material, not a restart instruction for an affected account.
+```text
+URL, Saved export or inbox
+        │
+        ▼
+  igx CLI ──► capture: yt-dlp (YouTube), X fetch, String public capture (Instagram)
+        │
+        ▼
+  media: ffmpeg frames ─► Tesseract OCR ─► Whisper transcript
+        │
+        ▼
+  downloads/<source>/<id>/ + a JSONL result row per item
+        │
+        ▼
+  agent or Gemini draft ─► note-check ─► note filed under a topic hub in the vault
+```
+
+## Example
+
+```bash
+python scripts/igx.py youtube 'https://www.youtube.com/watch?v=…'
+```
+
+Each item gets its own folder with the video, audio, a Whisper transcript (`{id}.txt`), the caption (`{id}.description.txt`), on-screen text (`{id}.ocr.txt`) and sampled frames or carousel slides. The agent then writes a note like this (shape only; the values are placeholders):
+
+```markdown
+---
+source: https://www.youtube.com/watch?v=…
+date: 2026-11-03
+type: youtube
+tags: [youtube, ai-tools]
+author: "@creator"
+---
+
+## TL;DR
+- Three bullets an agent or a person can read first.
+
+## What they said
+Speech, on-screen text and caption combined, so you can skip the video.
+
+## Dissection
+| Claim | Evidence | Verdict |
+|---|---|---|
+
+## Related
+[[topic-hub]]
+```
+
+## Instagram access
+
+Instagram capture goes through the metered [String public-capture path](docs/public-capture.md), which never uses Instagram login cookies. The older signed-in extractor is paused and is not a fallback. Read [docs/instagram-account-incident.md](docs/instagram-account-incident.md) before setting up any Instagram access.
+
+**Point an agent at this clone** (Claude Code, Cursor, Codex, Gemini CLI): it should read `AGENTS.md` first.
 
 ## Setup
 
@@ -41,11 +96,11 @@ python scripts\check-setup.py
 
 Use `Gyan.FFmpeg` so `ffmpeg` is on PATH (`yt-dlp.FFmpeg` often is not). Optional: Tesseract for on-screen OCR.
 
-Cookies: `%USERPROFILE%\.config\ig-cookies.txt` (same `~/.config/ig-cookies.txt` path). Recipe: [docs/auth.md](docs/auth.md).
-
 Dependencies: `yt-dlp`, `ffmpeg`, `ffprobe`, optional `tesseract`.
 
-**Instagram cookies:** there is no Instagram OAuth, Graph API, or “Connect Instagram.” You log into instagram.com in a browser. The pipeline reuses that session via a Netscape jar at `~/.config/ig-cookies.txt` (include HttpOnly `sessionid`; `chmod 600` on Unix). Scripts exit if the file is missing. Full recipe: [docs/auth.md](docs/auth.md). Never commit, log, or paste the file. X login wall (optional): `~/.config/x-cookies.txt`.
+Tests: `python3 -m unittest discover -s lib -p 'test_*.py'`.
+
+Authentication details (there is no Instagram OAuth; the legacy cookie jar is paused, and the optional X cookie jar) are in [docs/auth.md](docs/auth.md). Never commit, log or paste a cookie file.
 
 ## Usage
 
@@ -93,8 +148,9 @@ Optional paste-inbox (Notion or any URL list): this repo does not include a host
 | File | For |
 |------|-----|
 | [AGENTS.md](AGENTS.md) | Agent entry point (Claude / Cursor / Codex / Gemini) |
-| [docs/instagram-account-incident.md](docs/instagram-account-incident.md) | Account incident, recovery evidence, and hold rules — read first |
-| [docs/auth.md](docs/auth.md) | Cookie jar — no OAuth |
+| [docs/public-capture.md](docs/public-capture.md) | Metered Instagram capture without login cookies |
+| [docs/instagram-account-incident.md](docs/instagram-account-incident.md) | Instagram access history and hold rules (read before any Instagram setup) |
+| [docs/auth.md](docs/auth.md) | Cookie jars (legacy Instagram, optional X); no OAuth |
 | [docs/paste-inbox.md](docs/paste-inbox.md) | Optional URL queue + ping (not this repo) |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Extraction steps, failures |
 | [docs/obsidian-filing.md](docs/obsidian-filing.md) | Where notes go |
